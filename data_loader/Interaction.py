@@ -49,6 +49,14 @@ class Interaction(object):
         data = np.ones((len(self.song_ids)))
         return csr_matrix((data, (self.playlist_ids, self.song_ids)))
 
+    @property
+    def num_song_ids(self):
+        return len(set(self.song_ids))
+
+    @property
+    def num_playlist_ids(self):
+        return len(set(self.playlist_ids))
+
 
 if __name__ == "__main__":
     song_meta_file = "../res/song_meta.json"
