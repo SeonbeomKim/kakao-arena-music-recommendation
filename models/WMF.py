@@ -42,8 +42,9 @@ class WMF:
         self.learning_rate = learning_rate
         self.train_loss_estimator = tf.keras.metrics.Mean(name="train_loss")
         self.val_loss_estimator = tf.keras.metrics.Mean(name="val_loss")
-        self.test_loss_estimator = tf.keras.metrics.Mean(name="test_loss")
         self.val_ndcg_estimator = tf.keras.metrics.Mean(name="val_ndcg")
+        self.test_loss_estimator = tf.keras.metrics.Mean(name="test_loss")
+        self.test_ndcg_estimator = tf.keras.metrics.Mean(name="test_ndcg")
         self.regularization_factor = regularization_factor
         self.alpha = alpha
 
@@ -156,18 +157,24 @@ class WMF:
         else:
             raise ValueError("Invalid mode Value")
 
-    def measure_ndcg(self, playlist_ids, labels):
+    def measure_ndcg(self, playlist_ids, labels, mode="test"):
         scored_songs = self.predict_songs(playlist_ids)
         _, ranked_scores = tf.math.top_k(scored_songs, k=100)
         rank_list = tf.RaggedTensor.from_value_rowids(
             values=labels.nonzero()[1], value_rowids=labels.nonzero()[0])
         ndcg = ndcg_at_k(rank_list.to_list(), ranked_scores.numpy(), k=100)
-        self.val_ndcg_estimator(ndcg)
+        if mode == "test":
+            self.test_ndcg_estimator(ndcg)
+        elif mode == "val":
+            self.val_ndcg_estimator(ndcg)
+        else:
+            raise ValueError("Invalid mode value")
 
     def train(self, dataset, neg_dataset, batch_size=1024, epochs=150):
         train_dataset, valid_dataset = train_test_split(
             dataset, test_size=0.2, random_state=42)
         train_dataset_csr = train_dataset
+        val_dataset_csr = valid_dataset
         train_dataset, valid_dataset = train_dataset.tocoo(), valid_dataset.tocoo()
 
         train_neg_dataset, valid_neg_dataset = train_test_split(
@@ -187,18 +194,19 @@ class WMF:
 
             # train
             for i in range(train_total_batch):
-                batch_playlist_ids = train_playlist_ids[i * batch_size: min((i + 1) * batch_size, num_train_data)]
-                batch_song_ids = train_song_ids[i * batch_size: min((i + 1) * batch_size, num_train_data)]
-                batch_co_occurs = train_co_occurs[i * batch_size: min((i + 1) * batch_size, num_train_data)]
-                self.train_op(batch_playlist_ids, batch_song_ids, batch_co_occurs)
+                train_batch_playlist_ids = train_playlist_ids[i * batch_size: min((i + 1) * batch_size, num_train_data)]
+                train_batch_song_ids = train_song_ids[i * batch_size: min((i + 1) * batch_size, num_train_data)]
+                train_batch_co_occurs = train_co_occurs[i * batch_size: min((i + 1) * batch_size, num_train_data)]
+                self.train_op(train_batch_playlist_ids, train_batch_song_ids, train_batch_co_occurs)
                 # TODO: Metric 설정 및 추가 해야 함.
                 if i % 100 == 0:
                     # TODO: validation 과정에서 validation 전체 데이터를 사용하도록 해야함.
-                    val_batch_playlist_ids = val_playlist_ids[0:batch_size]
-                    val_batch_song_ids = val_song_ids[0:batch_size]
-                    val_batch_co_occurs = val_co_occurs[0:batch_size]
+                    val_idx = i % val_total_batch
+                    val_batch_playlist_ids = val_playlist_ids[val_idx * batch_size: min((val_idx + 1) * batch_size, num_val_data)]
+                    val_batch_song_ids = val_song_ids[val_idx * batch_size: min((val_idx + 1) * batch_size, num_val_data)]
+                    val_batch_co_occurs = val_co_occurs[val_idx * batch_size: min((val_idx + 1) * batch_size, num_val_data)]
                     self.measure_loss(val_batch_playlist_ids, val_batch_song_ids, val_batch_co_occurs, mode="val")
-                    self.measure_ndcg(val_batch_playlist_ids, train_dataset_csr[val_batch_playlist_ids])
+                    self.measure_ndcg(val_batch_playlist_ids, val_dataset_csr[val_batch_playlist_ids], mode="val")
                     print(
                         f"{i}/{train_total_batch} "
                         f"loss: {self.train_loss_estimator.result()} "
@@ -210,10 +218,11 @@ class WMF:
 
             # validation
             for i in range(val_total_batch):
-                batch_playlist_ids = val_playlist_ids[i * batch_size: min((i + 1) * batch_size, num_val_data)]
-                batch_song_ids = val_song_ids[i * batch_size: min((i + 1) * batch_size, num_val_data)]
-                batch_co_occurs = val_co_occurs[i * batch_size: min((i + 1) * batch_size, num_val_data)]
-                self.measure_loss(batch_playlist_ids, batch_song_ids, batch_co_occurs, mode="val")
+                train_batch_playlist_ids = val_playlist_ids[i * batch_size: min((i + 1) * batch_size, num_val_data)]
+                train_batch_song_ids = val_song_ids[i * batch_size: min((i + 1) * batch_size, num_val_data)]
+                train_batch_co_occurs = val_co_occurs[i * batch_size: min((i + 1) * batch_size, num_val_data)]
+                self.measure_loss(train_batch_playlist_ids, train_batch_song_ids, train_batch_co_occurs, mode="val")
+                self.measure_ndcg(train_batch_playlist_ids, val_dataset_csr[train_batch_playlist_ids], mode="val")
             print(
                 f"train epoch : {epoch} loss: {self.train_loss_estimator.result()} val loss : {self.val_loss_estimator.result()}")
             self.train_loss_estimator.reset_states()
@@ -222,16 +231,19 @@ class WMF:
     def test(self, dataset, neg_dataset, batch_size=512):
         num_data = dataset.shape[0]
         total_batch = (num_data // batch_size) + 1
+        test_dataset_csr = dataset
         dataset, neg_dataset = dataset.tocoo(), neg_dataset.tocoo()
         playlist_ids, song_ids, co_occurs = process_data(dataset, neg_dataset)
 
         for i in range(total_batch):
-            batch_playlist_ids = playlist_ids[i * batch_size: min((i + 1) * batch_size, num_data)]
-            batch_song_ids = song_ids[i * batch_size: min((i + 1) * batch_size, num_data)]
-            batch_co_occurs = co_occurs[i * batch_size: min((i + 1) * batch_size, num_data)]
-            self.measure_loss(batch_playlist_ids, batch_song_ids, batch_co_occurs)
-        print(f" test loss: {self.test_loss_estimator.result()}")
+            test_batch_playlist_ids = playlist_ids[i * batch_size: min((i + 1) * batch_size, num_data)]
+            test_batch_song_ids = song_ids[i * batch_size: min((i + 1) * batch_size, num_data)]
+            test_batch_co_occurs = co_occurs[i * batch_size: min((i + 1) * batch_size, num_data)]
+            self.measure_loss(test_batch_playlist_ids, test_batch_song_ids, test_batch_co_occurs, mode="test")
+            self.measure_ndcg(test_batch_playlist_ids, test_dataset_csr[test_batch_playlist_ids], mode="test")
+        print(f" test loss: {self.test_loss_estimator.result()}, ndcg : {self.test_ndcg_estimator.result()}")
         self.test_loss_estimator.reset_states()
+        self.test_ndcg_estimator.reset_states()
 
 
 if __name__ == "__main__":
