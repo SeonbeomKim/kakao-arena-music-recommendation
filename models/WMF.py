@@ -193,6 +193,7 @@ class WMF:
                 self.train_op(batch_playlist_ids, batch_song_ids, batch_co_occurs)
                 # TODO: Metric 설정 및 추가 해야 함.
                 if i % 100 == 0:
+                    # TODO: validation 과정에서 validation 전체 데이터를 사용하도록 해야함.
                     val_batch_playlist_ids = val_playlist_ids[0:batch_size]
                     val_batch_song_ids = val_song_ids[0:batch_size]
                     val_batch_co_occurs = val_co_occurs[0:batch_size]

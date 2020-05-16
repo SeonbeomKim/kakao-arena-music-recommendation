@@ -1,23 +1,31 @@
 import numpy as np
 import tensorflow as tf
 
+FLOAT_MAX = np.finfo(np.float32).max
 
-def calculate_ndcg(songs, labels):
+
+def calculate_metric(items, labels):
     dcg = 0.0
-    for i, song_id in enumerate(songs):
-        if song_id in labels:
+    for i, item_id in enumerate(items):
+        if item_id in labels:
             dcg += 1.0 / np.log(i + 2)
-    return dcg / (sum((1.0 / np.log(i + 2) for i in range(len(labels)))))
+
+    ndcg = dcg / (sum((1.0 / np.log(i + 2) for i in range(len(labels)))))
+    return ndcg
 
 
-def ndcg_at_k(labels, pred_y, k):
-    labels = labels
-    pred_y = pred_y
-    scores = []
-    for idx, songs in enumerate(pred_y):
-        scores.append(calculate_ndcg(songs, labels[idx]))
-    return np.sum(scores) / len(songs)
+def evaluate_ndcg(labels, pred_y):
+    ndcg_list = []
+    for idx, items in enumerate(pred_y):
+        ndcg = calculate_metric(items, labels[idx])
+        ndcg_list.append(ndcg)
+    return np.mean(ndcg_list)
 
+
+def ndcg_at_k(rank_list, scored_items, k=50):
+    _, ranked_scores = tf.math.top_k(scored_items, k=k)
+    ndcg = evaluate_ndcg(rank_list, ranked_scores.numpy())
+    return ndcg
 
 # class ArenaEvaluator:
 #     def _idcg(self, l):
