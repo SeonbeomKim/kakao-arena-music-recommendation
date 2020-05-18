@@ -50,18 +50,11 @@ class Interaction(object):
                     song_dict[song] = [song]
 
     def process_playlist_tag_data(self):
-        min = 9999
-        max = 0
         for playlist_data in self.train_data:
             playlist_id = playlist_data['id']
             tags = playlist_data['tags']
             self.playlist_ids.extend([playlist_id] * len(tags))
             self.tags.extend(tags)
-            if min > len(tags):
-                min = len(tags)
-            if max < len(tags):
-                max = len(tags)
-        print("a")
 
     def encode_ids(self):
         self.playlist_ids = self.playlist_encoder.fit_transform(self.playlist_ids)

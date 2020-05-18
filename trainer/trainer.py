@@ -1,18 +1,31 @@
 import json
+
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
 
-from models.WMF import WMF
 from data_loader.Interaction import Interaction, sample_neg
+from models.WMF import WMF
 
 tf.random.set_seed(777)
+
+
+def export_results(results, playlist_id_encoder, tag_encoder):
+    total_result = []
+    for idx, result in enumerate(results):
+        playlist_dict = {}
+        playlist_dict['id'] = playlist_id_encoder.inverse_transform([idx+1])
+        playlist_dict['songs'] = []
+        playlist_dict['tags'] = tag_encoder.inverse_transform(result)
+        total_result.append(playlist_dict)
+    return total_result
+
 
 if __name__ == "__main__":
     lambda_value = 0.1
     neg_sample_ratio = 1.2  # positive dataset 대비 얼마나 neg dataset을 sample 할 지
     learning_rate = 0.05
     batch_size = 256
-    epochs = 100
+    epochs = 1
 
     # loading data
     print("loading data ...")
@@ -48,4 +61,5 @@ if __name__ == "__main__":
         train_neg_dataset,
         batch_size=batch_size,
         epochs=epochs)
-    wmf.test(test_dataset, test_neg_dataset)
+    results = wmf.test(test_dataset, test_neg_dataset)
+    export_results(results, interaction.playlist_encoder, interaction.tag_encoder)
