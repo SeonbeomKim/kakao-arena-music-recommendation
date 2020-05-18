@@ -27,27 +27,54 @@ class Interaction(object):
         self.train_data = train_data
         self.playlist_ids = []
         self.song_ids = []
+        self.tags = []
         self.song_encoder = LabelEncoder()
         self.playlist_encoder = LabelEncoder()
+        self.tag_encoder = LabelEncoder()
 
-    def process_data(self):
+    def process_playlist_song_data(self):
         for playlist_data in self.train_data:
             playlist_id = playlist_data['id']
             songs = playlist_data['songs']
             self.playlist_ids.extend([playlist_id] * len(songs))
             self.song_ids.extend(songs)
 
+    def process_song_playlist_data(self):
+        song_dict = {}
+        for playlist_data in self.train_data:
+            songs = playlist_data['songs']
+            for song in songs:
+                if song in song_dict:
+                    song_dict[song].append(playlist_data['id'])
+                else:
+                    song_dict[song] = [song]
+
+    def process_playlist_tag_data(self):
+        min = 9999
+        max = 0
+        for playlist_data in self.train_data:
+            playlist_id = playlist_data['id']
+            tags = playlist_data['tags']
+            self.playlist_ids.extend([playlist_id] * len(tags))
+            self.tags.extend(tags)
+            if min > len(tags):
+                min = len(tags)
+            if max < len(tags):
+                max = len(tags)
+        print("a")
+
     def encode_ids(self):
         self.playlist_ids = self.playlist_encoder.fit_transform(self.playlist_ids)
         self.song_ids = self.song_encoder.fit_transform(self.song_ids)
+        self.tags = self.tag_encoder.fit_transform(self.tags)
 
     def build_interaction_matrix(self):
-        self.process_data()
+        self.process_playlist_tag_data()
         self.encode_ids()
         # TODO: check this in an elegant way
-        assert len(self.song_ids) == len(self.playlist_ids)
-        data = np.ones((len(self.song_ids)))
-        return csr_matrix((data, (self.playlist_ids, self.song_ids)))
+        assert len(self.tags) == len(self.playlist_ids)
+        data = np.ones((len(self.tags)))
+        return csr_matrix((data, (self.playlist_ids, self.tags)))
 
     @property
     def num_song_ids(self):
@@ -56,6 +83,10 @@ class Interaction(object):
     @property
     def num_playlist_ids(self):
         return len(set(self.playlist_ids))
+
+    @property
+    def num_tags(self):
+        return len(set(self.tags))
 
 
 if __name__ == "__main__":

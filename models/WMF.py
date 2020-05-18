@@ -170,7 +170,7 @@ class WMF:
         else:
             raise ValueError("Invalid mode value")
 
-    def train(self, dataset, neg_dataset, batch_size=1024, epochs=150):
+    def train(self, dataset, neg_dataset, batch_size=512, epochs=150):
         train_dataset, valid_dataset = train_test_split(
             dataset, test_size=0.2, random_state=42)
         train_dataset_csr = train_dataset
