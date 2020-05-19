@@ -7,7 +7,10 @@ from util import load_json, LabelEncoder
 class Session:
     def __init__(self, dataset, label_encoder=None):
         self.dataset = dataset
-        self.model_input = None
+        self.model_input = []
+        self.model_input_A_length = []
+        self.positive_label = []
+        self.negative_label = []
 
         if label_encoder:
             self.label_encoder = label_encoder
@@ -89,16 +92,13 @@ class Session:
 
             model_input = tuple(self.convert_model_input(sample_songs, sample_tags))
             if model_input not in result:
-                result[model_input] = [next_songs, negative_songs]
+                model_input_A_length = len(sample_songs) + 2 # cls || sample_songs || sep
+                result[model_input] = [next_songs, negative_songs, model_input_A_length]
 
         return result
 
 
     def make_dataset(self, positive_k=3, negative_k=10, sample_num_of_each_plylst=1000):
-        dataset = []
-        positive_label = []
-        negative_label = []
-
         for each in self.dataset:
             plylst_tags = each['tags']  # list
             songs = each['songs']  # song id list
@@ -111,23 +111,28 @@ class Session:
                 sample_num=sample_num_of_each_plylst)
 
             for data in next_k_song_data:
-                positive, negative = next_k_song_data[data]
-                dataset.append(self.label_encoder.transform(data))
-                positive_label.append(self.label_encoder.transform(positive))
-                negative_label.append(self.label_encoder.transform(negative))
+                positive, negative, model_input_A_length = next_k_song_data[data]
+                self.model_input.append(self.label_encoder.transform(data))
+                self.positive_label.append(self.label_encoder.transform(positive))
+                self.negative_label.append(self.label_encoder.transform(negative))
+                self.model_input_A_length.append(model_input_A_length)
 
-            print(next_k_song_data)
-            print(dataset[-1])
-            print(positive_label[-1])
-            print(negative_label[-1])
-            if input() == " ":
-                break
+            # print(next_k_song_data)
+            # print(dataset[-1])
+            # print(positive_label[-1])
+            # print(negative_label[-1])
+            # if input() == " ":
+            #     break
 
 if __name__ == "__main__":
-    train_set = load_json(os.path.join('dataset/orig/train.json'))
+    train_set = load_json(os.path.join(workspace_path, 'dataset/orig/train.json'))
     train_session = Session(train_set)
     train_session.set_label_encoder()
     train_session.make_dataset(positive_k=3, negative_k=10, sample_num_of_each_plylst=1)
-    # valid_session = Session(train_session.label_encoder)
+
+    val_set = load_json(os.path.join(workspace_path, 'dataset/orig/val.json'))
+    val_session = Session(val_set, train_session.label_encoder)
+    val_session.set_label_encoder()
 
     # make_next_k_song_data(songs=[1,2,3,4,5,6,7,8], tags=[11,12,13,14,15], k = 3, negative_k = 10, sample_num=1)
+
