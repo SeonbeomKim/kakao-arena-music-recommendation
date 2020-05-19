@@ -2,7 +2,7 @@ import json
 import os
 
 import numpy as np
-
+import pandas as pd
 
 def load_json(fname):
     with open(fname, encoding="utf-8") as f:
@@ -25,6 +25,13 @@ def write_json(data, fname):
     with open(fname, "w", encoding="utf-8") as f:
         json_str = json.dumps(data, ensure_ascii=False, default=_conv)
         f.write(json_str)
+
+
+def fill_na(data, fill_value=0):
+    # data:[[1,2],[1],[1,2,3]]
+    # return: [[1,2,fill_value], [1,fill_value,fill_value], [1,2,3]]
+    df = pd.DataFrame(data)
+    return df.fillna(fill_value).values # numpy type
 
 
 class LabelEncoder:
