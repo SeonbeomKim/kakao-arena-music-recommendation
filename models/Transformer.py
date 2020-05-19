@@ -2,8 +2,6 @@
 # https://arxiv.org/abs/1607.06450 Layer Normalization
 # https://arxiv.org/abs/1512.00567 Label Smoothing
 
-import numpy as np
-import os
 import tensorflow as tf  # version 1.4
 
 
@@ -20,43 +18,50 @@ class Transformer:
         self.encoder_decoder_stack = encoder_decoder_stack
         self.multihead_num = multihead_num
         self.pad_idx = pad_idx  # <'pad'> symbol index
-        self.cls_idx = cls_idx  # <'cls'> symbol index
-        # self.PE = tf.convert_to_tensor(self.positional_encoding(),
-        #                                dtype=tf.float32)  # [self.max_sequence_length, self.embedding_siz] #slice해서 쓰자.
 
         with tf.name_scope("placeholder"):
             self.lr = tf.placeholder(tf.float32)
+
+            # cls_idx || song indices || sep_idx || tag indices || sep_idx 로 받음. (max_sequence_length) 길이
             self.input_sequence_indices = tf.placeholder(tf.int32, [None, None], name='input_sequence_indices')
-            self.next_item_idx = tf.placeholder(tf.int32, [None], name='next_item_idx')
-            self.negative_item_idx = tf.placeholder(tf.int32, [None], name='negative_item_idx')
+
+            # cls_idx || song indices || sep_idx 까지가 A 길이
+            self.A_length = tf.placeholder(tf.int32, [None], name='A_length')
+            self.next_item_idx = tf.placeholder(tf.int32, [None, None], name='next_item_idx')
+            self.negative_item_idx = tf.placeholder(tf.int32, [None, None], name='negative_item_idx')
             self.keep_prob = tf.placeholder(tf.float32, name='keep_prob')
             # dropout (each sublayers before add and norm)  and  (sums of the embeddings and the PE) and (attention)
+
+            # pre_training 용도
             self.boolean_mask = tf.placeholder(tf.bool, [None, None], name='boolean_mask')
             self.masked_LM_target = tf.placeholder(tf.int32, [None], name='masked_LM_target')
             self.label_smoothing = tf.placeholder(tf.float32, name='label_smoothing')
 
         with tf.name_scope("embedding_table"):
-            with tf.device('/cpu:0'):
-                zero = tf.zeros([1, self.embedding_size], dtype=tf.float32)  # for padding
-                # embedding_table = tf.Variable(tf.random_uniform([self.voca_size-1, self.embedding_size], -1, 1))
-                embedding_table = tf.get_variable(
-                    # https://github.com/tensorflow/models/blob/master/official/transformer/model/embedding_layer.py
-                    'embedding_table',
-                    [self.voca_size - 1, self.embedding_size],
-                    initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
-                front, end = tf.split(embedding_table, [self.pad_idx, self.voca_size - 1 - self.pad_idx])
-                self.embedding_table = tf.concat((front, zero, end), axis=0)  # [self.voca_size, self.embedding_size]
+            zero = tf.zeros([1, self.embedding_size], dtype=tf.float32)  # for padding
+            # embedding_table = tf.Variable(tf.random_uniform([self.voca_size-1, self.embedding_size], -1, 1))
+            embedding_table = tf.get_variable(
+                # https://github.com/tensorflow/models/blob/master/official/transformer/model/embedding_layer.py
+                'embedding_table',
+                [self.voca_size - 1, self.embedding_size],
+                initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
+            front, end = tf.split(embedding_table, [self.pad_idx, self.voca_size - 1 - self.pad_idx])
+            self.embedding_table = tf.concat((front, zero, end), axis=0)  # [self.voca_size, self.embedding_size]
 
-            self.position_embedding_table = tf.get_variable(
+            # https://github.com/google-research/bert/blob/master/modeling.py
+            self.position_embedding_table = tf.get_variable(  # [self.max_sequence_length, self.embedding_size]
                 'position_embedding_table',
-                [self.max_sequence_length + 1, self.embedding_size],
-                initializer=tf.truncated_normal_initializer(stddev=0.02)
-                # https://github.com/google-research/bert/blob/master/modeling.py
-            )  # [self.max_sequence_length+1(cls), self.embedding_size]
+                [self.max_sequence_length, self.embedding_size],  # (cls + sep + eos) 총 3개 추
+                initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+            self.segment_embedding_table = tf.get_variable(  # [2, self.embedding_size]
+                'segment_embedding_table',
+                [2, self.embedding_size],
+                initializer=tf.truncated_normal_initializer(stddev=0.02))
 
         with tf.name_scope('encoder'):
             encoder_input_embedding, encoder_input_mask = self.embedding_and_PE(self.input_sequence_indices,
-                                                                                self.cls_idx)
+                                                                                self.A_length)
             self.encoder_embedding = self.encoder(encoder_input_embedding, encoder_input_mask)
 
         with tf.name_scope('sequence_embedding'):
@@ -66,13 +71,19 @@ class Transformer:
         with tf.name_scope('train_sequence_embedding'):
             next_item_embedding = tf.nn.embedding_lookup(
                 self.embedding_table,
-                self.next_item_idx)  # [N, self.embedding_size]
+                self.next_item_idx)  # [N, K, self.embedding_size]
             negative_item_embedding = tf.nn.embedding_lookup(
                 self.embedding_table,
-                self.negative_item_idx)  # [N, self.embedding_size]
+                self.negative_item_idx)  # [N, K, self.embedding_size]
 
-            positive = tf.reduce_sum(self.sequence_embedding * next_item_embedding, axis=-1)
-            negative = tf.reduce_sum(self.sequence_embedding * negative_item_embedding, axis=-1)
+            positive = tf.reduce_sum(  # [N, K]
+                tf.expand_dims(self.sequence_embedding, axis=1) * next_item_embedding,  # [N, K, self.embedding_size]
+                axis=-1)
+            negative = tf.reduce_sum(  # [N, K]
+                tf.expand_dims(self.sequence_embedding, axis=1) * negative_item_embedding,
+                # [N, K, self.embedding_size]
+                axis=-1)
+
             # next item에 대해서는 sigmoid 결과 1, negative item에 대해서는 sigmoid 결과 0 되도록 학습
             positive_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                 labels=tf.ones_like(positive),
@@ -82,7 +93,8 @@ class Transformer:
                 labels=tf.zeros_like(negative),
                 logits=negative)
 
-            self.loss = tf.reduce_mean(positive_loss) + tf.reduce_mean(negative_loss)
+            self.loss = tf.reduce_sum(tf.reduce_mean(positive_loss, axis=-1)) + tf.reduce_sum(
+                tf.reduce_mean(negative_loss, axis=-1))
 
         with tf.name_scope('masked_pre_training'):
             self.masked_position = tf.boolean_mask(self.encoder_embedding,
@@ -118,40 +130,45 @@ class Transformer:
         with tf.name_scope("saver"):
             self.saver = tf.train.Saver(max_to_keep=10000)
 
-    def embedding_and_PE(self, data, cls_idx):
-        # data: [N, max_sequence_length]
-
-        # 맨 앞에 cls token 할당
-        cls_token = tf.fill(
-            dims=[tf.shape(data)[0], 1],  # [N, 1]
-            value=cls_idx)
-        data = tf.concat((cls_token, data), axis=-1)  # [N, 1+max_sequence_length]
+    def embedding_and_PE(self, data, A_length):
+        # data: [N, data_length]
 
         # embedding lookup and scale
-        with tf.device('/cpu:0'):
-            embedding = tf.nn.embedding_lookup(
-                self.embedding_table,
-                data
-            )  # [N, 1+max_sequence_length, self.embedding_size]
-            PE = tf.expand_dims(
-                self.position_embedding_table,
-                axis=0
-            )  # [1, 1+max_sequence_length, self.embedding_size], will be broadcast
+        embedding = tf.nn.embedding_lookup(  # [N, data_length, self.embedding_size]
+            self.embedding_table,
+            data)
+
+        A_B_sequence_mask = tf.sequence_mask(
+            A_length,
+            tf.shape(data)[1])  # [N, data_length], A:1, B:0
+
+        # tag 부분은 PE를 더하면 안돼서 마스킹
+        PE_mask = tf.expand_dims(tf.cast(A_B_sequence_mask, tf.float32), axis=-1)  # [N, data_length, 1]
+        PE = tf.expand_dims(  # [1, data_length, self.embedding_size], will be broadcast
+            self.position_embedding_table,
+            axis=0)[:, :tf.shape(data)[1], :]
+        PE = PE * PE_mask
+
+        SE = tf.nn.embedding_lookup(  # [N, data_length, self.embedding_size]
+            self.segment_embedding_table,
+            tf.cast(A_B_sequence_mask, tf.int32))
 
         if self.is_embedding_scale is True:
             embedding *= self.embedding_size ** 0.5
 
         embedding_mask = tf.expand_dims(
-            tf.cast(tf.not_equal(data, self.pad_idx), dtype=tf.float32),  # [N, 1+max_sequence_length]
+            tf.cast(tf.not_equal(data, self.pad_idx), dtype=tf.float32),  # [N, data_length]
             axis=-1
-        )  # [N, 1+max_sequence_length, 1]
+        )  # [N, data_length, 1]
 
         # Add Position Encoding
-        embedding += PE
-        # embedding += self.PE[:tf.shape(embedding)[1], :]
+        embedding += (PE + SE)
 
         # pad masking (set 0 PE added pad position)
         embedding *= embedding_mask
+
+        # Layer Normalization
+        embedding = tf.contrib.layers.layer_norm(embedding, begin_norm_axis=2)
 
         # Drop out
         embedding = tf.nn.dropout(embedding, keep_prob=self.keep_prob)
@@ -314,13 +331,3 @@ class Transformer:
             dense = tf.contrib.layers.layer_norm(dense, begin_norm_axis=2)
 
         return dense
-
-    # def positional_encoding(self):
-    #     PE = np.zeros([self.max_sequence_length, self.embedding_size], np.float32)
-    #     for pos in range(self.max_sequence_length):  # 충분히 크게 만들어두고 slice 해서 쓰자.
-    #         sin, cos = [], []
-    #         for i in range(0, self.embedding_size // 2):
-    #             sin.append(np.sin(pos / np.power(10000, 2 * i / self.embedding_size)).astype(np.float32))
-    #             cos.append(np.cos(pos / np.power(10000, 2 * i / self.embedding_size)).astype(np.float32))
-    #         PE[pos] = np.concatenate((sin, cos))
-    #     return PE  # [self.max_sequence_length, self.embedding_siz]
