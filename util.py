@@ -1,8 +1,26 @@
 import json
 import os
+import pickle
 
 import numpy as np
 import pandas as pd
+
+
+def dump(data, fname):
+    parent = os.path.dirname(fname)
+    if not os.path.exists(parent):
+        print("create %s" % parent)
+        os.makedirs(parent)
+
+    with open(fname, "wb") as f:
+        pickle.dump(data, f)
+
+
+def load(fname):
+    with open(fname, 'rb') as f:
+        data = pickle.load(f)
+    return data
+
 
 def load_json(fname):
     with open(fname, encoding="utf-8") as f:
@@ -31,11 +49,11 @@ def fill_na(data, fill_value=0):
     # data:[[1,2],[1],[1,2,3]]
     # return: [[1,2,fill_value], [1,fill_value,fill_value], [1,2,3]]
     df = pd.DataFrame(data)
-    return df.fillna(fill_value).values # numpy type
+    return df.fillna(fill_value).values  # numpy type
 
 
 class LabelEncoder:
-    def __init__(self, unk_token = '@unk'):
+    def __init__(self, unk_token='@unk'):
         self.classes_ = None
         self.data_to_label = {}
         self.label_to_data = []
@@ -56,7 +74,7 @@ class LabelEncoder:
                 self.label_to_data.append(data)
             trans_data.append((self.data_to_label[data]))
         self.classes_ = self.label_to_data
-        return trans_data[:-1] # unk_token 제외
+        return trans_data[:-1]  # unk_token 제외
 
     def transform(self, data_list):
         trans_data = []
