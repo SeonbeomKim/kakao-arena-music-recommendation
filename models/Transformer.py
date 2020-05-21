@@ -9,7 +9,7 @@ import tensorflow as tf  # version 1.4
 
 class Transformer:
     def __init__(self, voca_size, embedding_size, is_embedding_scale, max_sequence_length,
-                 encoder_decoder_stack, multihead_num, pad_idx, cls_idx):
+                 encoder_decoder_stack, multihead_num, pad_idx, unk_idx):
 
         self.voca_size = voca_size
         self.embedding_size = embedding_size
@@ -18,6 +18,7 @@ class Transformer:
         self.encoder_decoder_stack = encoder_decoder_stack
         self.multihead_num = multihead_num
         self.pad_idx = pad_idx  # <'pad'> symbol index
+        self.unk_idx = unk_idx  # <'pad'> symbol index
 
         with tf.name_scope("placeholder"):
             self.lr = tf.placeholder(tf.float32)
@@ -38,15 +39,11 @@ class Transformer:
             self.label_smoothing = tf.placeholder(tf.float32, name='label_smoothing')
 
         with tf.name_scope("embedding_table"):
-            zero = tf.zeros([1, self.embedding_size], dtype=tf.float32)  # for padding
-            # embedding_table = tf.Variable(tf.random_uniform([self.voca_size-1, self.embedding_size], -1, 1))
-            embedding_table = tf.get_variable(
+            self.embedding_table = tf.get_variable(
                 # https://github.com/tensorflow/models/blob/master/official/transformer/model/embedding_layer.py
                 'embedding_table',
-                [self.voca_size - 1, self.embedding_size],
+                [self.voca_size, self.embedding_size],
                 initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
-            front, end = tf.split(embedding_table, [self.pad_idx, self.voca_size - 1 - self.pad_idx])
-            self.embedding_table = tf.concat((front, zero, end), axis=0)  # [self.voca_size, self.embedding_size]
 
             # https://github.com/google-research/bert/blob/master/modeling.py
             self.position_embedding_table = tf.get_variable(  # [self.max_sequence_length, self.embedding_size]
@@ -85,16 +82,28 @@ class Transformer:
                 axis=-1)
 
             # next item에 대해서는 sigmoid 결과 1, negative item에 대해서는 sigmoid 결과 0 되도록 학습
-            positive_loss = tf.nn.sigmoid_cross_entropy_with_logits(
+            positive_loss = tf.nn.sigmoid_cross_entropy_with_logits(  # [N, K]
                 labels=tf.ones_like(positive),
                 logits=positive)
+            # unk인 label 위치는 학습안되도록 masking
+            positive_loss_mask = tf.cast(tf.not_equal(self.next_item_idx, self.unk_idx), tf.float32)  # [N, K]
+            valid_positive_size = tf.reduce_sum(positive_loss_mask, axis=-1)  # [N]
+            self.positive_loss = tf.reduce_sum( # 상수
+                tf.reduce_sum(positive_loss * positive_loss_mask, # [N]
+                              axis=-1) / valid_positive_size)
 
             negative_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                 labels=tf.zeros_like(negative),
                 logits=negative)
+            # unk인 label 위치는 학습안되도록 masking
+            negative_loss_mask = tf.cast(tf.not_equal(self.negative_item_idx, self.unk_idx), tf.float32)  # [N, K]
+            valid_negative_size = tf.reduce_sum(negative_loss_mask, axis=-1)  # [N]
+            self.negative_loss = tf.reduce_sum( # 상수
+                tf.reduce_sum(negative_loss * negative_loss_mask, # [N]
+                              axis=-1) / valid_negative_size)
 
-            self.loss = tf.reduce_sum(tf.reduce_mean(positive_loss, axis=-1)) + tf.reduce_sum(
-                tf.reduce_mean(negative_loss, axis=-1))
+            # 학습할 objective function
+            self.loss = self.positive_loss + self.negative_loss
 
         with tf.name_scope('masked_pre_training'):
             self.masked_position = tf.boolean_mask(self.encoder_embedding,
