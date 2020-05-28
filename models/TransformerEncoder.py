@@ -4,8 +4,7 @@
 
 import tensorflow as tf  # version 1.4
 
-
-# tf.set_random_seed(787)
+tf.set_random_seed(787)
 
 class TransformerEncoder:
     def __init__(self, voca_size, songs_tags_size, embedding_size, is_embedding_scale, max_sequence_length,
