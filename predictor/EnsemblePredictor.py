@@ -109,8 +109,8 @@ class EnsemblePredictor:
         for each in tqdm(dataset, total=len(dataset)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            seen_songs = set(each['songs'])
-            seen_tags = set(each['tags'])
+            seen_songs = set(songs)
+            seen_tags = set(tags)
             plylst_title = each['plylst_title']
 
             if not songs and not tags and not plylst_title:
@@ -124,8 +124,8 @@ class EnsemblePredictor:
                 A_length = len(songs) + 2
 
                 reco_songs, reco_tags = self.songs_tags_do_reco(model_input, A_length,
-                                                                song_top_k=pred_songs_num + len(songs),
-                                                                tag_top_k=pred_tags_num + len(tags))
+                                                                song_top_k=pred_songs_num + len(seen_songs),
+                                                                tag_top_k=pred_tags_num + len(seen_tags))
 
                 total_reco_songs.update(dict(reco_songs))
                 total_reco_tags.update(dict(reco_tags))
@@ -135,37 +135,29 @@ class EnsemblePredictor:
                     plylst_title, label_info.cls_token, label_info.sep_token, sp)
 
                 reco_songs, reco_tags = self.plylst_title_do_reco(model_input,
-                                                                  song_top_k=pred_songs_num + len(songs),
-                                                                  tag_top_k=pred_tags_num + len(tags))
-                reco_songs = dict(reco_songs)
-                reco_tags = dict(reco_tags)
+                                                                  song_top_k=pred_songs_num + len(seen_songs),
+                                                                  tag_top_k=pred_tags_num + len(seen_tags))
 
-                for reco_song in reco_songs:
-                    score = reco_songs[reco_song]
+                for reco_song, score in reco_songs:
                     if reco_song not in total_reco_songs:
                         total_reco_songs[reco_song] = 0
-                    total_reco_songs[reco_song] += score * plylst_title_weight
+                    total_reco_songs[reco_song] += (score * plylst_title_weight)
 
-                for reco_tag in reco_tags:
-                    score = reco_tags[reco_tag]
+                for reco_tag, score in reco_tags:
                     if reco_tag not in total_reco_tags:
                         total_reco_tags[reco_tag] = 0
-                    total_reco_tags[reco_tag] += score * plylst_title_weight
+                    total_reco_tags[reco_tag] += (score * plylst_title_weight)
 
             # 이미 담겨있는 노래, 태그 제외
-            for reco_song in list(total_reco_songs.keys()):
-                if reco_song in seen_songs:
-                    total_reco_songs.pop(reco_song)
-            for reco_tag in list(total_reco_tags.keys()):
-                if reco_tag in seen_tags:
-                    total_reco_tags.pop(reco_tag)
+            filter_reco_songs = list(
+                filter(lambda song_score: song_score[0] not in seen_songs, total_reco_songs.items()))
+            filter_reco_tags = list(filter(lambda tag_score: tag_score[0] not in seen_tags, total_reco_tags.items()))
 
+            # 정렬하고 자르기
             reco_songs = list(
-                map(lambda x: x[0], sorted(list(total_reco_songs.items()), key=lambda x: x[1], reverse=True)))[
-                         :pred_songs_num]
+                map(lambda x: x[0], sorted(filter_reco_songs, key=lambda x: x[1], reverse=True)))[:pred_songs_num]
             reco_tags = list(
-                map(lambda x: x[0], sorted(list(total_reco_tags.items()), key=lambda x: x[1], reverse=True)))[
-                        :pred_tags_num]
+                map(lambda x: x[0], sorted(filter_reco_tags, key=lambda x: x[1], reverse=True)))[:pred_tags_num]
 
             answers.append({
                 "id": each["id"],
