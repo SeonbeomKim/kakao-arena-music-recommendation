@@ -1,93 +1,97 @@
 import json
 
 import numpy as np
-from scipy import sparse as sp
 from scipy.sparse import csr_matrix
 from sklearn.preprocessing import LabelEncoder
-
-
-def sample_neg(positive_interaction, neg_sample_ratio=1.2):
-    num_neg_sample = int(positive_interaction.size * neg_sample_ratio)
-    Y = sp.coo_matrix(positive_interaction.shape)
-    Y_size = 0
-    num_rows, num_cols = positive_interaction.shape
-    while Y_size < num_neg_sample:
-        num_to_sample = num_neg_sample - Y_size
-        data = np.concatenate([Y.data, np.ones(num_to_sample)])
-        Y_row = np.concatenate([Y.row, np.random.choice(num_rows, num_to_sample)])
-        Y_col = np.concatenate([Y.col, np.random.choice(num_cols, num_to_sample)])
-        Y = sp.coo_matrix((data, (Y_row, Y_col)), shape=positive_interaction.shape)
-        Y = sp.coo_matrix(Y - positive_interaction.multiply(Y))
-        Y_size = Y.size
-    return Y
 
 
 class Interaction(object):
     def __init__(self, train_data):
         self.train_data = train_data
-        self.playlist_ids = []
-        self.song_ids = []
-        self.tags = []
-        self.song_encoder = LabelEncoder()
+        self.raw_tag_playlist_ids = []
+        self.encoded_tag_playlist_ids = []
+        self.tag_playlist_ids_set = set()
+
+        self.raw_song_playlist_ids = []
+        self.encoded_song_playlist_ids = []
+        self.song_playlist_ids_set = set()
+
+        self.non_interaction_playlist_set = set()
+
+        self.raw_song = []
+        self.encoded_song = []
+        self.song_set = set()
+
+        self.raw_tags = []
+        self.encoded_tags = []
+        self.tag_set = set()
+
+        self.playlist_set = None
+
         self.playlist_encoder = LabelEncoder()
         self.tag_encoder = LabelEncoder()
+        self.song_encoder = LabelEncoder()
 
-    def process_playlist_song_data(self):
-        for playlist_data in self.train_data:
-            playlist_id = playlist_data['id']
-            songs = playlist_data['songs']
-            self.playlist_ids.extend([playlist_id] * len(songs))
-            self.song_ids.extend(songs)
+        self.process_train_data()
+        self.encode_train_ids()
 
-    def process_song_playlist_data(self):
-        song_dict = {}
-        for playlist_data in self.train_data:
-            songs = playlist_data['songs']
-            for song in songs:
-                if song in song_dict:
-                    song_dict[song].append(playlist_data['id'])
-                else:
-                    song_dict[song] = [song]
-
-    def process_playlist_tag_data(self):
+    def process_train_data(self):
         for playlist_data in self.train_data:
             playlist_id = playlist_data['id']
             tags = playlist_data['tags']
-            self.playlist_ids.extend([playlist_id] * len(tags))
-            self.tags.extend(tags)
+            songs = playlist_data['songs']
+            if len(tags) == 0:
+                self.non_interaction_playlist_set.add(playlist_id)
+            if len(songs) == 0:
+                self.non_interaction_playlist_set.add(playlist_id)
+            self.raw_tag_playlist_ids.extend([playlist_id] * len(tags))
+            self.raw_song_playlist_ids.extend([playlist_id] * len(songs))
+            self.raw_tags.extend(tags)
+            self.raw_song.extend(songs)
 
-    def encode_ids(self):
-        self.playlist_ids = self.playlist_encoder.fit_transform(self.playlist_ids)
-        self.song_ids = self.song_encoder.fit_transform(self.song_ids)
-        self.tags = self.tag_encoder.fit_transform(self.tags)
+    def encode_train_ids(self):
+        # encode only train data
+        self.tag_playlist_ids_set = set(self.raw_tag_playlist_ids)
+        self.song_playlist_ids_set = set(self.raw_song_playlist_ids)
+        self.playlist_set = self.tag_playlist_ids_set | self.song_playlist_ids_set | self.non_interaction_playlist_set
+        self.playlist_encoder.fit_transform(list(self.playlist_set))
+        self.tag_set = set(self.raw_tags)
+        self.song_set = set(self.raw_song)
+        self.encoded_tag_playlist_ids = self.playlist_encoder.transform(self.raw_tag_playlist_ids)
+        self.encoded_song_playlist_ids = self.playlist_encoder.transform(self.raw_song_playlist_ids)
+        self.encoded_tags = self.tag_encoder.fit_transform(self.raw_tags)
+        self.encoded_song = self.song_encoder.fit_transform(self.raw_song)
 
-    def build_interaction_matrix(self):
-        self.process_playlist_tag_data()
-        self.encode_ids()
+    def build_playlist_tag_matrix(self):
         # TODO: check this in an elegant way
-        assert len(self.tags) == len(self.playlist_ids)
-        data = np.ones((len(self.tags)))
-        return csr_matrix((data, (self.playlist_ids, self.tags)))
+        assert len(self.encoded_tags) == len(self.encoded_tag_playlist_ids)
+        data = np.ones((len(self.encoded_tags)))
+        return csr_matrix((data, (self.encoded_tag_playlist_ids, self.encoded_tags)))
 
-    @property
-    def num_song_ids(self):
-        return len(set(self.song_ids))
+    def build_playlist_song_matrix(self):
+        assert len(self.encoded_song) == len(self.encoded_song_playlist_ids)
+        data = np.ones((len(self.encoded_song)))
+        return csr_matrix((data, (self.encoded_song_playlist_ids, self.encoded_song)))
 
     @property
     def num_playlist_ids(self):
-        return len(set(self.playlist_ids))
+        return len(set(self.raw_tag_playlist_ids))
 
     @property
     def num_tags(self):
-        return len(set(self.tags))
+        return len(set(self.encoded_tags))
 
 
 if __name__ == "__main__":
-    song_meta_file = "../res/song_meta.json"
-    train_file = "../res/train.json"
+    song_meta_file = "dataset/orig/song_meta.json"
+    train_file = "dataset/orig/train.json"
+    val_file = "dataset/orig/val.json"
     with open(train_file) as f:
-        data = json.load(f)
-    interaction = Interaction(data)
-    matrix = interaction.build_interaction_matrix()
-    neg_matrix = sample_neg(matrix, neg_sample_ratio=1.2)
+        train_data = json.load(f)
+    with open(train_file) as f:
+        val_data = json.load(f)
+
+    interaction = Interaction(train_data)
+    train_matrix = interaction.build_playlist_tag_matrix()
+
     print("finish")
