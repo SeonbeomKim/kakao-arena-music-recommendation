@@ -42,8 +42,8 @@ if __name__ == "__main__":
     util.dump(val_input_output, os.path.join(parameters.base_dir, parameters.plylst_title_transformer_val_input_output))
 
     # validation을 위해 val set은 미리 고정해서 저장.
-    model_val_dataset = plylst_title_util.make_train_val_set(val_input_output, parameters.input_bucket_size,
-                                                             parameters.output_bucket_size, sample=10,
-                                                             label_info=label_info, sentencepiece=sp, shuffle=False)
+    model_val_dataset = plylst_title_util.make_train_val_set(val_input_output, parameters.title_max_sequence_length,
+                                                             label_info=label_info, sentencepiece=sp, sample=30,
+                                                             shuffle=False)
     util.dump(model_val_dataset,
               os.path.join(parameters.base_dir, parameters.plylst_title_transformer_val_sampled_data))
