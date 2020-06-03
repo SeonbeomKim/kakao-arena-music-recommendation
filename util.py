@@ -2,9 +2,15 @@ import json
 import os
 import pickle
 import random
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
+
+
+def convert_updt_date(updt_date):
+    dtime = datetime.strptime(updt_date, '%Y-%m-%d %H:%M:%S.%f')
+    return int(dtime.strftime("%Y%m%d"))
 
 
 def select_bucket(data_size, bucket_size):
@@ -13,6 +19,12 @@ def select_bucket(data_size, bucket_size):
             return bucket
     return None
 
+def label_to_sparse_label(label):
+    sparse_label = []
+    for row in range(len(label)):
+        for _label in label[row]:
+            sparse_label.append([row, _label])
+    return sparse_label
 
 def get_k_negative_label(positive_label_set, total_label, k):
     negative_label = []
