@@ -8,9 +8,9 @@ import data_loader.plylst_title_util as plylst_title_util
 import data_loader.songs_tags_util as songs_tags_util
 import parameters
 import util
-from models.OrderlessBert import OrderlessBert
+from models.OrderlessBertAE import OrderlessBertAE
 from models.TransformerEncoder import TransformerEncoder
-
+import numpy as np
 
 class EnsemblePredictor:
     def __init__(self, plylst_title_saver_path, songs_tags_saver_path, label_info, sp):
@@ -42,7 +42,7 @@ class EnsemblePredictor:
 
         songs_tags_model_graph = tf.Graph()
         with songs_tags_model_graph.as_default():
-            songs_tags_model = OrderlessBert(
+            songs_tags_model = OrderlessBertAE(
                 voca_size=len(self.label_info.label_encoder.classes_),
                 embedding_size=parameters.embed_size,  # 128인경우 850MB 먹음.
                 is_embedding_scale=True,
@@ -81,11 +81,11 @@ class EnsemblePredictor:
 
         reco_songs, reco_songs_score, reco_tags, reco_tags_score = sess.run(
             [model.reco_songs, model.reco_songs_score, model.reco_tags, model.reco_tags_score],
-            {model.input_sequence_indices: [model_input],
+            {model.input_sequence_indices: model_input,
              model.keep_prob: 1.0,
              model.song_top_k: song_top_k,
              model.tag_top_k: tag_top_k})
-        return list(zip(reco_songs[0], reco_songs_score[0])), list(zip(reco_tags[0], reco_tags_score[0]))
+        return list(zip(reco_songs, reco_songs_score)), list(zip(reco_tags, reco_tags_score))
 
     def songs_tags_do_reco(self, model_input, A_length, song_top_k=100, tag_top_k=50):
         model = self.songs_tags_model
@@ -93,109 +93,168 @@ class EnsemblePredictor:
 
         reco_songs, reco_songs_score, reco_tags, reco_tags_score = sess.run(
             [model.reco_songs, model.reco_songs_score, model.reco_tags, model.reco_tags_score],
-            {model.input_sequence_indices: [model_input],
-             model.A_length: [A_length],
+            {model.input_sequence_indices: model_input,
+             model.A_length: A_length,
              model.keep_prob: 1.0,
              model.song_top_k: song_top_k,
              model.tag_top_k: tag_top_k})
-        return list(zip(reco_songs[0], reco_songs_score[0])), list(zip(reco_tags[0], reco_tags_score[0]))
+        return list(zip(reco_songs, reco_songs_score)), list(zip(reco_tags, reco_tags_score))
 
-    def predict(self, dataset, pred_songs_num=100, pred_tags_num=10, plylst_title_weight=1.):
+    def merge_dict(self, dict_A, dict_B, id, weight=1):
+        if id not in dict_A:
+            dict_A[id] = {}
+        for key, value in dict_B.items():
+            if key not in dict_A[id]:
+                dict_A[id][key] = 0
+            dict_A[id][key] += value * weight
+
+    def predict(self, dataset, song_meta, pred_songs_num=100, pred_tags_num=10, plylst_title_weight=1., batch_size=64):
         answers = []
 
         sp = self.sp
         label_info = self.label_info
 
+        song_issue_dict = {}
+        for each in song_meta:
+            song_issue_dict[each["id"]] = int(each['issue_date'])
+
+        id_seen_songs_dict = {}
+        id_seen_tags_dict = {}
+        id_plylst_updt_date_dict = {}
+        songs_tags_model_info = {'id_list': [], 'model_input': [], 'A_length': []}
+        plylst_title_model_info = {'id_list': [], 'model_input': []}
+
+        total_id_reco_songs = {}
+        total_id_reco_tags = {}
         for each in tqdm(dataset, total=len(dataset)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
             seen_songs = set(songs)
             seen_tags = set(tags)
             plylst_title = each['plylst_title']
+            plylst_updt_date = util.convert_updt_date(each["updt_date"])
+            plylst_id = each["id"]
 
             if not songs and not tags and not plylst_title:
                 print('No songs No tags No plylst_title')
                 continue
 
-            total_reco_songs = {}
-            total_reco_tags = {}
             if len(songs) + len(tags):
                 model_input = songs_tags_util.convert_model_input(songs, tags, label_info.label_encoder)
                 A_length = len(songs) + 2
-
-                reco_songs, reco_tags = self.songs_tags_do_reco(model_input, A_length,
-                                                                song_top_k=pred_songs_num + len(seen_songs),
-                                                                tag_top_k=pred_tags_num + len(seen_tags))
-
-                total_reco_songs.update(dict(reco_songs))
-                total_reco_tags.update(dict(reco_tags))
+                songs_tags_model_info['id_list'].append(plylst_id)
+                songs_tags_model_info['model_input'].append(model_input)
+                songs_tags_model_info['A_length'].append(A_length)
 
             if plylst_title:
                 model_input = plylst_title_util.convert_model_input(
                     plylst_title, label_info.cls_token, label_info.sep_token, sp)
+                plylst_title_model_info['id_list'].append(plylst_id)
+                plylst_title_model_info['model_input'].append(model_input)
 
-                reco_songs, reco_tags = self.plylst_title_do_reco(model_input,
-                                                                  song_top_k=pred_songs_num + len(seen_songs),
-                                                                  tag_top_k=pred_tags_num + len(seen_tags))
+            id_seen_songs_dict[plylst_id] = seen_songs
+            id_seen_tags_dict[plylst_id] = seen_tags
+            id_plylst_updt_date_dict[plylst_id] = plylst_updt_date
 
-                for reco_song, score in reco_songs:
-                    if reco_song not in total_reco_songs:
-                        total_reco_songs[reco_song] = 0
-                    total_reco_songs[reco_song] += (score * plylst_title_weight)
+        # songs_tags_model run
+        data_num = len(songs_tags_model_info['id_list'])
+        epoch = int(np.ceil(data_num / batch_size))
+        for i in tqdm(range(epoch)):
+            batch_model_input = util.fill_na(
+                songs_tags_model_info['model_input'][i * batch_size:(i + 1) * batch_size],
+                label_info.label_encoder.transform([label_info.pad_token])[0]).astype(np.int32)
+            batch_A_length = songs_tags_model_info['A_length'][i * batch_size:(i + 1) * batch_size]
+            batch_id_list = songs_tags_model_info['id_list'][i * batch_size:(i + 1) * batch_size]
 
-                for reco_tag, score in reco_tags:
-                    if reco_tag not in total_reco_tags:
-                        total_reco_tags[reco_tag] = 0
-                    total_reco_tags[reco_tag] += (score * plylst_title_weight)
+            reco_songs, reco_tags = self.songs_tags_do_reco(batch_model_input, batch_A_length,
+                                                            song_top_k=1000,
+                                                            tag_top_k=100)
+            for (_reco_songs, _reco_score), _id in zip(reco_songs, batch_id_list):
+                self.merge_dict(total_id_reco_songs, dict(zip(_reco_songs, _reco_score)), _id, weight=1.)
+            for (_reco_tags, _reco_score), _id in zip(reco_tags, batch_id_list):
+                self.merge_dict(total_id_reco_tags, dict(zip(_reco_tags, _reco_score)), _id, weight=1.)
 
-            # 이미 담겨있는 노래, 태그 제외
-            filter_reco_songs = list(
-                filter(lambda song_score: song_score[0] not in seen_songs, total_reco_songs.items()))
-            filter_reco_tags = list(filter(lambda tag_score: tag_score[0] not in seen_tags, total_reco_tags.items()))
+        del songs_tags_model_info
+
+        # plylst title model run
+        data_num = len(plylst_title_model_info['id_list'])
+        epoch = int(np.ceil(data_num / batch_size))
+        for i in tqdm(range(epoch)):
+            batch_model_input = util.fill_na(
+                plylst_title_model_info['model_input'][i * batch_size:(i + 1) * batch_size],
+                sp.piece_to_id(label_info.pad_token)).astype(np.int32)
+            batch_id_list = plylst_title_model_info['id_list'][i * batch_size:(i + 1) * batch_size]
+
+            reco_songs, reco_tags = self.plylst_title_do_reco(batch_model_input,
+                                                              song_top_k=1000,
+                                                              tag_top_k=100)
+            for (_reco_songs, _reco_score), _id in zip(reco_songs, batch_id_list):
+                self.merge_dict(total_id_reco_songs, dict(zip(_reco_songs, _reco_score)), _id, weight=plylst_title_weight)
+            for (_reco_tags, _reco_score), _id in zip(reco_tags, batch_id_list):
+                self.merge_dict(total_id_reco_tags, dict(zip(_reco_tags, _reco_score)), _id, weight=plylst_title_weight)
+
+        # 이미 담겨있는 노래, 태그, 플레이리스트 업데이트 날짜보다 발매일 늦은 노래 제외 및 정렬하고 자르기
+        for _id in id_plylst_updt_date_dict:
+            # 노래
+            seen_songs = id_seen_songs_dict[_id]
+            plylst_updt_date = id_plylst_updt_date_dict[_id]
+            filtered_songs = []
+            for song, score in total_id_reco_songs[_id].items():
+                if len(filtered_songs) == pred_songs_num:
+                    break
+                if song in seen_songs:
+                    continue
+                if song_issue_dict[song] > plylst_updt_date:
+                    continue
+                filtered_songs.append([song, score])
+            total_id_reco_songs[_id] = list(
+                map(lambda x: x[0], sorted(filtered_songs, key=lambda x: x[1], reverse=True)))[:pred_songs_num]
+
+            # 태그
+            seen_tags = id_seen_tags_dict[_id]
+            filtered_tags = list(
+                filter(lambda tag_score: tag_score[0] not in seen_tags, total_id_reco_tags[_id].items()))
+            total_id_reco_tags[_id] = list(
+                map(lambda x: x[0], sorted(filtered_tags, key=lambda x: x[1], reverse=True)))[:pred_tags_num]
 
             # 정렬하고 자르기
-            reco_songs = list(
-                map(lambda x: x[0], sorted(filter_reco_songs, key=lambda x: x[1], reverse=True)))[:pred_songs_num]
-            reco_tags = list(
-                map(lambda x: x[0], sorted(filter_reco_tags, key=lambda x: x[1], reverse=True)))[:pred_tags_num]
-
             answers.append({
-                "id": each["id"],
-                "songs": label_info.label_encoder.inverse_transform(reco_songs),
-                "tags": label_info.label_encoder.inverse_transform(reco_tags),
+                "id": _id,
+                "songs": label_info.label_encoder.inverse_transform(total_id_reco_songs[_id]),
+                "tags": label_info.label_encoder.inverse_transform(total_id_reco_tags[_id]),
             })
         return answers
 
 
+
 if __name__ == "__main__":
-    gpu = 3
-    song_loss_weight = 1.
-
-    plylst_title_lr = 0.00005  # config.lr
-    plylst_title_restore = 18  # config.restore
-
-    songs_tags_lr = 0.00005  # config.lr
-    songs_tags_restore = 8  # config.restore
+    gpu = 4
 
     label_info = util.load(os.path.join(parameters.base_dir, parameters.label_info))
     sp = spm.SentencePieceProcessor(model_file=os.path.join(parameters.base_dir, parameters.bpe_model_file))
 
-    plylst_title_restore = 26
-    songs_tags_restore = 12
-    plylst_title_saver_path = './saver_title_emb%d_stack%d_head%d_lr_%0.5f_song_loss_weight_%0.2f/%d.ckpt' % (
-        parameters.embed_size, parameters.stack, parameters.multihead, plylst_title_lr, song_loss_weight,
+    plylst_title_restore = 20
+    songs_tags_restore = 20
+    plylst_title_saver_path = 'saver_new_titleAE_emb128_stack4_head4_lr_0.00050_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
         plylst_title_restore)
-    songs_tags_saver_path = './saver_AE_emb%d_stack%d_head%d_lr_%0.5f_song_loss_weight_%0.2f/%d.ckpt' % (
-        parameters.embed_size, parameters.stack, parameters.multihead, songs_tags_lr, song_loss_weight,
+    songs_tags_saver_path = 'saver_new_AE_batch_emb128_stack4_head4_lr_0.00050_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
         songs_tags_restore)
 
+    print(plylst_title_saver_path)
+    print(songs_tags_saver_path)
+
     # predictor
-    predictor = EnsemblePredictor(plylst_title_saver_path, songs_tags_saver_path, label_info, sp)
+    self = EnsemblePredictor(plylst_title_saver_path, songs_tags_saver_path, label_info, sp)
 
     val_set = util.load_json('dataset/questions/val.json')
+    song_meta = util.load_json('dataset/song_meta.json')
 
-    plylst_title_weight = [1.0, 0.8, 0.7, 0.5, 0.3, 0.1]
+    plylst_title_weight = [0.5, 1.0, 0.8, 0.7, 0.3, 0.1, 5.0]
 
     for weight in plylst_title_weight:
-        reco_result = predictor.predict(val_set, pred_songs_num=100, pred_tags_num=10, plylst_title_weight=weight)
+        reco_result = self.predict(val_set, song_meta, pred_songs_num=100, pred_tags_num=10,
+                                   plylst_title_weight=weight)
         util.write_json(reco_result, "results/results_%0.2f.json" % weight)
+
+
+

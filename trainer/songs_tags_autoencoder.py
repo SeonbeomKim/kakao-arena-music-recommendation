@@ -5,14 +5,14 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
+import data_loader.songs_tags_util as songs_tags_util
 import parameters
 import util
-import data_loader.songs_tags_util as songs_tags_util
-from models.OrderlessBert import OrderlessBert
+from models.OrderlessBertAE import OrderlessBertAE
 
 args = argparse.ArgumentParser()
 args.add_argument('--lr', type=float, default=0.001)
-args.add_argument('--bs', type=int, default=512)
+args.add_argument('--bs', type=int, default=256)
 args.add_argument('--gpu', type=int, default=6)
 config = args.parse_args()
 lr = config.lr
@@ -20,65 +20,64 @@ bs = config.bs
 gpu = config.gpu
 
 
-def train(model, train_input_output, lr, batch_size=64, keep_prob=0.9, song_loss_weight=1.):
-    model_train_dataset = songs_tags_util.make_train_val_set(train_input_output, parameters.input_bucket_size,
-                                                              parameters.output_bucket_size, sample=50,
-                                                              label_info=label_info, shuffle=True)
-
+def train(model, train_input_output, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5, negative_loss_weight=0.5):
+    model_train_dataset = songs_tags_util.make_train_val_set(train_input_output, parameters.max_sequence_length,
+                                                           label_info, sample=1, shuffle=True)
     loss = 0
-    total_batch = 0
-    for bucket in model_train_dataset:
-        data_num = len(model_train_dataset[bucket]['model_input_A_length'])
 
-        epoch = int(np.ceil(data_num / batch_size))
-        total_batch += epoch
-        for i in tqdm(range(epoch), desc=str(bucket)):
-            _, train_loss = sess.run([model.minimize, model.loss],
-                                     {model.input_sequence_indices: model_train_dataset[bucket]['model_input'][
-                                                                    batch_size * i: batch_size * (i + 1)],
-                                      model.A_length: model_train_dataset[bucket]['model_input_A_length'][
-                                                      batch_size * i: batch_size * (i + 1)],
-                                      model.positive_item_idx: model_train_dataset[bucket]['positive_label'][
-                                                               batch_size * i: batch_size * (i + 1)],
-                                      model.negative_item_idx: model_train_dataset[bucket]['negative_label'][
-                                                               batch_size * i: batch_size * (i + 1)],
-                                      model.keep_prob: keep_prob,
-                                      model.lr: lr
-                                      # model.song_loss_weight: float(song_loss_weight)
-                                      })
-            loss += train_loss
+    data_num = len(model_train_dataset['model_input'])
+    epoch = int(np.ceil(data_num / batch_size))
 
-    return loss / total_batch
+    for i in tqdm(range(epoch)):
+        batch_input_sequence_indices = model_val_dataset['model_input'][batch_size * i: batch_size * (i + 1)]
+        batch_A_length = model_val_dataset['A_length'][batch_size * i: batch_size * (i + 1)]
+        batch_sparse_label = util.label_to_sparse_label(
+            model_val_dataset['label'][batch_size * i: batch_size * (i + 1)])
+
+        _, _loss = sess.run([model.minimize, model.loss],
+                            {model.input_sequence_indices: batch_input_sequence_indices,
+                             model.A_length: batch_A_length,
+                             model.sparse_label: batch_sparse_label,
+                             model.batch_size: min(len(batch_input_sequence_indices), batch_size),
+                             model.keep_prob: keep_prob,
+                             model.lr: lr,
+                             model.tags_loss_weight: tags_loss_weight,
+                             model.negative_loss_weight: negative_loss_weight
+                             })
+        loss += _loss
+
+    return loss / data_num
 
 
-def validation(model, model_val_dataset, batch_size=64, song_loss_weight=1.):
+
+def validation(model, model_val_dataset, batch_size=64, tags_loss_weight=0.5, negative_loss_weight=0.5):
     loss = 0
-    total_batch = 0
-    for bucket in model_val_dataset:
-        data_num = len(model_val_dataset[bucket]['model_input_A_length'])
 
-        epoch = int(np.ceil(data_num / batch_size))
-        total_batch += epoch
-        for i in tqdm(range(epoch), desc=str(bucket)):
-            val_loss = sess.run(model.loss,
-                                {model.input_sequence_indices: model_val_dataset[bucket]['model_input'][
-                                                               batch_size * i: batch_size * (i + 1)],
-                                 model.A_length: model_val_dataset[bucket]['model_input_A_length'][
-                                                 batch_size * i: batch_size * (i + 1)],
-                                 model.positive_item_idx: model_val_dataset[bucket]['positive_label'][
-                                                          batch_size * i: batch_size * (i + 1)],
-                                 model.negative_item_idx: model_val_dataset[bucket]['negative_label'][
-                                                          batch_size * i: batch_size * (i + 1)],
-                                 model.keep_prob: 1.0
-                                 # model.song_loss_weight: float(song_loss_weight)
-                                 })
-            loss += val_loss
+    data_num = len(model_val_dataset['model_input'])
+    epoch = int(np.ceil(data_num / batch_size))
 
-    return loss / total_batch
+    for i in tqdm(range(epoch)):
+        batch_input_sequence_indices = model_val_dataset['model_input'][batch_size * i: batch_size * (i + 1)]
+        batch_A_length = model_val_dataset['A_length'][batch_size * i: batch_size * (i + 1)]
+        batch_sparse_label = util.label_to_sparse_label(
+            model_val_dataset['label'][batch_size * i: batch_size * (i + 1)])
+
+        _loss = sess.run(model.loss,
+                            {model.input_sequence_indices: batch_input_sequence_indices,
+                             model.A_length: batch_A_length,
+                             model.sparse_label: batch_sparse_label,
+                             model.batch_size:min(len(batch_input_sequence_indices), batch_size),
+                             model.keep_prob: 1.0,
+                             model.tags_loss_weight: tags_loss_weight,
+                             model.negative_loss_weight: negative_loss_weight
+                             })
+        loss += _loss
+
+    return loss / data_num
 
 
 def run(model, sess, train_input_output, model_val_dataset, saver_path, lr, batch_size=512, keep_prob=0.9,
-        song_loss_weight=1., restore=0):
+        tags_loss_weight=0.5, negative_loss_weight=0.5, restore=0):
     if not os.path.exists(saver_path):
         print("create save directory")
         os.makedirs(saver_path)
@@ -100,25 +99,33 @@ def run(model, sess, train_input_output, model_val_dataset, saver_path, lr, batc
             valid_loss_summary = tf.summary.scalar("valid_loss", valid_loss_tensorboard)
             # valid_positive_loss_summary = tf.summary.scalar("valid_positive_loss", valid_positive_loss_tensorboard)
 
-            merged = tf.summary.merge_all()
+            # merged = tf.summary.merge_all()
+            merged_train = tf.summary.merge([train_loss_summary])
+            merged_valid = tf.summary.merge([valid_loss_summary])
             writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
-            # merged_train_valid = tf.summary.merge([train_summary, valid_summary])
-            # merged_test = tf.summary.merge([test_summary])
 
-    for epoch in range(restore + 1, 31):
+    for epoch in range(restore + 1, 151):
         train_loss = train(model, train_input_output, lr, batch_size=batch_size, keep_prob=keep_prob,
-                           song_loss_weight=song_loss_weight)
+                           tags_loss_weight=tags_loss_weight, negative_loss_weight=negative_loss_weight)
         print("epoch: %d, train_loss: %f" % (epoch, train_loss))
-        valid_loss = validation(model, model_val_dataset, batch_size=batch_size, song_loss_weight=song_loss_weight)
-        print("epoch: %d, valid_loss: %f" % (epoch, valid_loss))
         print()
 
         # tensorboard
-        summary = sess.run(merged, {
-            train_loss_tensorboard: train_loss,
-            valid_loss_tensorboard: valid_loss})
+        summary = sess.run(merged_train, {
+            train_loss_tensorboard: train_loss})
         writer.add_summary(summary, epoch)
-        if (epoch) % 2 == 0:
+
+        if (epoch) % 5 == 0:
+            # tensorboard
+            valid_loss = validation(model, model_val_dataset, batch_size=batch_size, tags_loss_weight=tags_loss_weight,
+                                    negative_loss_weight=negative_loss_weight)
+            print("epoch: %d, valid_loss: %f" % (epoch, valid_loss))
+
+            summary = sess.run(merged_valid, {
+                valid_loss_tensorboard: valid_loss})
+            writer.add_summary(summary, epoch)
+            print()
+
             model.saver.save(sess, os.path.join(saver_path, str(epoch) + ".ckpt"))
 
 
@@ -145,7 +152,7 @@ songs_tags_wmf = util.load(os.path.join(parameters.base_dir, parameters.songs_ta
 init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
 
 # model
-model = OrderlessBert(
+model = OrderlessBertAE(
     voca_size=len(label_info.label_encoder.classes_),
     embedding_size=parameters.embed_size,  # 128인경우 850MB 먹음.
     is_embedding_scale=True,
@@ -166,17 +173,19 @@ sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
 sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
 
-song_loss_weight = 1.
+tags_loss_weight = 0.55
+negative_loss_weight = 0.55
 # # 학습 진행
 run(
     model,
     sess,
     train_input_output,
     model_val_dataset,
-    saver_path='./saver_AE_emb%d_stack%d_head%d_lr_%0.5f_song_loss_weight_%0.2f' % (
-        parameters.embed_size, parameters.stack, parameters.multihead, lr, song_loss_weight),
+    saver_path='./saver_decay_new_AE_batch_emb%d_stack%d_head%d_lr_%0.5f_tags_loss_weight_%0.2f_negative_loss_weight_%0.2f' % (
+        parameters.embed_size, parameters.stack, parameters.multihead, lr, tags_loss_weight, negative_loss_weight),
     lr=lr,
     batch_size=bs,
     keep_prob=0.9,
-    song_loss_weight=song_loss_weight,
+    tags_loss_weight=tags_loss_weight,
+    negative_loss_weight=negative_loss_weight,
     restore=0)

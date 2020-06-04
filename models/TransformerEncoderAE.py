@@ -6,9 +6,10 @@ import tensorflow as tf  # version 1.4
 
 tf.set_random_seed(787)
 
-class TransformerEncoder:
+
+class TransformerEncoderAE:
     def __init__(self, voca_size, songs_tags_size, embedding_size, is_embedding_scale, max_sequence_length,
-                 encoder_decoder_stack, multihead_num, pad_idx, unk_idx, songs_num, tags_num):
+                 encoder_decoder_stack, multihead_num, pad_idx, unk_idx, songs_num, tags_num, l2_weight_decay=0.001):
 
         self.voca_size = voca_size
         self.songs_tags_size = songs_tags_size
@@ -21,20 +22,21 @@ class TransformerEncoder:
         self.unk_idx = unk_idx  # <'pad'> symbol index
         self.songs_num = songs_num  # song 노래 개수, song label은 [0, songs_num) 으로 달려 있어야 함.
         self.tags_num = tags_num
+        self.l2_weight_decay = l2_weight_decay
 
         with tf.name_scope("placeholder"):
             self.lr = tf.placeholder(tf.float32)
-            self.song_loss_weight = tf.placeholder(tf.float32)
+            self.tags_loss_weight = tf.placeholder(tf.float32)
+            self.negative_loss_weight = tf.placeholder(tf.float32)
             self.song_top_k = tf.placeholder(tf.int32)
             self.tag_top_k = tf.placeholder(tf.int32)
 
             # cls_idx || song indices || sep_idx || 로 받음.
             self.input_sequence_indices = tf.placeholder(tf.int32, [None, None], name='input_sequence_indices')
-            self.positive_item_idx = tf.placeholder(tf.int32, [None, None], name='positive_item_idx')
-            self.negative_item_idx = tf.placeholder(tf.int32, [None, None], name='positive_item_idx')
+            self.sparse_label = tf.placeholder(dtype=tf.int64, shape=[None, 2])
+            self.batch_size = tf.placeholder(dtype=tf.int32)
             self.keep_prob = tf.placeholder(tf.float32, name='keep_prob')
             # dropout (each sublayers before add and norm)  and  (sums of the embeddings and the PE) and (attention)
-
 
         with tf.name_scope("embedding_table"):
             self.embedding_table = tf.get_variable(
@@ -63,95 +65,59 @@ class TransformerEncoder:
             # get cls embedding
             self.sequence_embedding = self.encoder_embedding[:, 0, :]  # [N, self.embedding_size]
 
-        with tf.name_scope('train_sequence_embedding'):
-            positive_item_embedding = tf.nn.embedding_lookup(
-                self.song_tag_embedding_table,
-                self.positive_item_idx)  # [N, K, self.embedding_size]
-            negative_item_embedding = tf.nn.embedding_lookup(
-                self.song_tag_embedding_table,
-                self.negative_item_idx)  # [N, K, self.embedding_size]
+        with tf.name_scope('label'):
+            label_sparse_tensor = tf.SparseTensor(indices=self.sparse_label,
+                                                  values=tf.ones(tf.shape(self.sparse_label)[0]),
+                                                  dense_shape=[self.batch_size, self.songs_num + self.tags_num])
+            label = tf.sparse_tensor_to_dense(label_sparse_tensor, validate_indices=False)
 
-            positive = tf.reduce_sum(  # [N, K]
-                tf.expand_dims(self.sequence_embedding, axis=1) * positive_item_embedding,
-                # [N, K, self.embedding_size]
-                axis=-1)
+        with tf.name_scope('trainer'):
+            self.predict = tf.nn.sigmoid(
+                tf.matmul(self.sequence_embedding, self.song_tag_embedding_table[:self.songs_num + self.tags_num, :],
+                          transpose_b=True))
 
-            # next item에 대해서는 sigmoid 결과 1, negative item에 대해서는 sigmoid 결과 0 되도록 학습
-            positive_loss = tf.nn.sigmoid_cross_entropy_with_logits(  # [N, K]
-                labels=tf.ones_like(positive),
-                logits=positive)
-            # song_loss_weight_mask = tf.cast(self.positive_item_idx < self.songs_num,
-            #                                 tf.float32) * self.song_loss_weight + tf.cast(
-            #     self.positive_item_idx >= self.songs_num, tf.float32)
-            #
-            # positive_loss *= song_loss_weight_mask  # song 예측이 ndcg 가중치 더 높으므로 song을 더 학습 잘되도록함.
+            tags_loss_mask = tf.cast(~tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num),
+                                     tf.float32) * self.tags_loss_weight
+            songs_loss_mask = tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num, tf.float32)
+            loss_mask = tf.expand_dims(songs_loss_mask + tags_loss_mask, axis=0) # [1, label]
 
-            # unk인 label 위치는 학습안되도록 masking
-            positive_loss_mask = tf.cast(tf.not_equal(self.positive_item_idx, self.unk_idx), tf.float32)  # [N, K]
-            valid_positive_size = tf.reduce_sum(positive_loss_mask)
-            self.positive_loss = tf.reduce_sum(positive_loss * positive_loss_mask) / valid_positive_size
-            # self.positive_loss = tf.reduce_sum(positive_loss * positive_loss_mask)
+            loss = label * tf.log(self.predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
+                    (1 - label) * tf.log(1 - self.predict + 1e-10))
 
-            negative = tf.reduce_sum(  # [N, K]
-                tf.expand_dims(self.sequence_embedding, axis=1) * negative_item_embedding,
-                axis=-1)
-            negative_loss = tf.nn.sigmoid_cross_entropy_with_logits(
-                labels=tf.zeros_like(negative),
-                logits=negative)
-            # unk인 label 위치는 학습안되도록 masking
-            negative_loss_mask = tf.cast(tf.not_equal(self.negative_item_idx, self.unk_idx), tf.float32)  # [N, K]
-            valid_negative_size = tf.reduce_sum(negative_loss_mask)
-            self.negative_loss = tf.reduce_sum(negative_loss * negative_loss_mask) / valid_negative_size
-            # self.negative_loss = tf.reduce_sum(negative_loss * negative_loss_mask)
-
-            # 학습할 objective function
-            self.loss = self.positive_loss + self.negative_loss
-
+            self.loss = tf.reduce_sum(
+                -tf.reduce_sum(loss * loss_mask, axis=-1))
 
         with tf.name_scope('predictor'):
-            sequence_embedding_norm = tf.expand_dims(  # [N, 1]
-                tf.sqrt(tf.reduce_sum(tf.square(self.sequence_embedding), axis=-1)),
-                axis=-1)
-            song_tag_embedding_norm = tf.expand_dims(  # [N, 1]
-                tf.sqrt(tf.reduce_sum(tf.square(self.song_tag_embedding_table), axis=-1)),
-                axis=-1)
-
-            normalized_sequence_embedding = self.sequence_embedding / sequence_embedding_norm
-            normalized_song_tag_embedding = self.song_tag_embedding_table / song_tag_embedding_norm
-
-            self.reco_songs, self.reco_songs_score = self.cosine_similarity(
-                normalized_sequence_embedding,
-                normalized_song_tag_embedding[:self.songs_num],
+            self.reco_songs, self.reco_songs_score = self.top_k(
+                predict=self.predict[:self.songs_num],
                 top_k=self.song_top_k)
-            self.reco_tags, self.reco_tags_score = self.cosine_similarity(
-                normalized_sequence_embedding,
-                normalized_song_tag_embedding[self.songs_num:self.songs_num + self.tags_num],
+            self.reco_tags, self.reco_tags_score = self.top_k(
+                predict=self.predict[self.songs_num:self.songs_num + self.tags_num],
                 top_k=self.tag_top_k)
             self.reco_tags += self.songs_num
 
+        with tf.name_scope('norm'):
+            # l2 norm
+            variables = tf.trainable_variables()
+            l2_norm = self.l2_weight_decay * tf.reduce_sum(
+                [tf.nn.l2_loss(i) for i in variables if
+                 ('LayerNorm' not in i.name and 'bias' not in i.name)]
+            )
+            print(self.l2_weight_decay)
 
         with tf.name_scope('optimizer'):
             optimizer = tf.train.AdamOptimizer(self.lr, beta1=0.9, beta2=0.98, epsilon=1e-9)
-            self.minimize = optimizer.minimize(self.loss)
+            self.minimize = optimizer.minimize(self.loss + l2_norm)
 
         with tf.name_scope("saver"):
             self.saver = tf.train.Saver(max_to_keep=10000)
 
-    def cosine_similarity(self, normalized_sequence_embedding, normalized_embedding, top_k=100):
-        # batch_embedding_list_input: [N, d]
-        # embedding_list: [voca, d]
-
-        # 정규화된 벡터로 내적하는 것이므로 cosine_similarity임
-        cosine_similarity = tf.matmul(  # [N, voca]
-            normalized_sequence_embedding,
-            normalized_embedding,
-            transpose_b=True)
-
-        reco = tf.math.top_k(
-            cosine_similarity,
+    def top_k(self, predict, top_k=100):
+        reco = tf.math.top_k(  # [N, label]
+            predict,
             top_k)
 
-        return reco.indices , reco.values # [N, top_k]
+        return reco.indices, reco.values  # [N, top_k]
 
     def embedding_and_PE(self, data):
         # data: [N, data_length]
