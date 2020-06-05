@@ -1,7 +1,10 @@
+import argparse
 import os
 
+import numpy as np
 import sentencepiece as spm
 import tensorflow as tf
+from models.TransformerEncoderAE import TransformerEncoderAE
 from tqdm import tqdm
 
 import data_loader.plylst_title_util as plylst_title_util
@@ -9,8 +12,14 @@ import data_loader.songs_tags_util as songs_tags_util
 import parameters
 import util
 from models.OrderlessBertAE import OrderlessBertAE
-from models.TransformerEncoder import TransformerEncoder
-import numpy as np
+
+args = argparse.ArgumentParser()
+args.add_argument('--input_path')
+args.add_argument('--output_path')
+config = args.parse_args()
+input_path = config.input_path
+output_path = config.output_path
+
 
 class EnsemblePredictor:
     def __init__(self, plylst_title_saver_path, songs_tags_saver_path, label_info, sp):
@@ -27,7 +36,7 @@ class EnsemblePredictor:
     def model_load(self, plylst_title_saver_path, songs_tags_saver_path):
         plylst_title_model_graph = tf.Graph()
         with plylst_title_model_graph.as_default():
-            plylst_title_model = TransformerEncoder(
+            plylst_title_model = TransformerEncoderAE(
                 voca_size=len(self.sp),
                 songs_tags_size=len(self.label_info.label_encoder.classes_),
                 embedding_size=parameters.embed_size,
@@ -108,7 +117,8 @@ class EnsemblePredictor:
                 dict_A[id][key] = 0
             dict_A[id][key] += value * weight
 
-    def predict(self, dataset, song_meta, pred_songs_num=100, pred_tags_num=10, plylst_title_weight=1., batch_size=64):
+    def predict(self, dataset, song_meta, pred_songs_num=100, pred_tags_num=10, plylst_title_song_weight=1.,
+                plylst_title_tag_weight=1., batch_size=64):
         answers = []
 
         sp = self.sp
@@ -124,6 +134,7 @@ class EnsemblePredictor:
         songs_tags_model_info = {'id_list': [], 'model_input': [], 'A_length': []}
         plylst_title_model_info = {'id_list': [], 'model_input': []}
 
+        no_data = 0
         total_id_reco_songs = {}
         total_id_reco_tags = {}
         for each in tqdm(dataset, total=len(dataset)):
@@ -136,7 +147,23 @@ class EnsemblePredictor:
             plylst_id = each["id"]
 
             if not songs and not tags and not plylst_title:
-                print('No songs No tags No plylst_title')
+                no_data += 1
+                # print('No songs No tags No plylst_title')
+                cold_start_reco_songs = []
+                cold_start_reco_tags = label_info.tags[:pred_tags_num]
+
+                for song in label_info.songs:  # top freq 순서임
+                    if len(cold_start_reco_songs) == pred_songs_num:
+                        break
+                    if song_issue_dict[song] > plylst_updt_date:
+                        continue
+                    cold_start_reco_songs.append(song)
+
+                answers.append({
+                    "id": plylst_id,
+                    "songs": cold_start_reco_songs,
+                    "tags": cold_start_reco_tags,
+                })
                 continue
 
             if len(songs) + len(tags):
@@ -145,6 +172,7 @@ class EnsemblePredictor:
                 songs_tags_model_info['id_list'].append(plylst_id)
                 songs_tags_model_info['model_input'].append(model_input)
                 songs_tags_model_info['A_length'].append(A_length)
+
 
             if plylst_title:
                 model_input = plylst_title_util.convert_model_input(
@@ -156,6 +184,8 @@ class EnsemblePredictor:
             id_seen_tags_dict[plylst_id] = seen_tags
             id_plylst_updt_date_dict[plylst_id] = plylst_updt_date
 
+
+        print('# no_data: %d' % no_data)
         # songs_tags_model run
         data_num = len(songs_tags_model_info['id_list'])
         epoch = int(np.ceil(data_num / batch_size))
@@ -173,7 +203,6 @@ class EnsemblePredictor:
                 self.merge_dict(total_id_reco_songs, dict(zip(_reco_songs, _reco_score)), _id, weight=1.)
             for (_reco_tags, _reco_score), _id in zip(reco_tags, batch_id_list):
                 self.merge_dict(total_id_reco_tags, dict(zip(_reco_tags, _reco_score)), _id, weight=1.)
-
         del songs_tags_model_info
 
         # plylst title model run
@@ -189,12 +218,14 @@ class EnsemblePredictor:
                                                               song_top_k=1000,
                                                               tag_top_k=100)
             for (_reco_songs, _reco_score), _id in zip(reco_songs, batch_id_list):
-                self.merge_dict(total_id_reco_songs, dict(zip(_reco_songs, _reco_score)), _id, weight=plylst_title_weight)
+                self.merge_dict(total_id_reco_songs, dict(zip(_reco_songs, _reco_score)), _id,
+                                weight=plylst_title_song_weight)
             for (_reco_tags, _reco_score), _id in zip(reco_tags, batch_id_list):
-                self.merge_dict(total_id_reco_tags, dict(zip(_reco_tags, _reco_score)), _id, weight=plylst_title_weight)
+                self.merge_dict(total_id_reco_tags, dict(zip(_reco_tags, _reco_score)), _id,
+                                weight=plylst_title_tag_weight)
 
         # 이미 담겨있는 노래, 태그, 플레이리스트 업데이트 날짜보다 발매일 늦은 노래 제외 및 정렬하고 자르기
-        for _id in id_plylst_updt_date_dict:
+        for _id in total_id_reco_songs:
             # 노래
             seen_songs = id_seen_songs_dict[_id]
             plylst_updt_date = id_plylst_updt_date_dict[_id]
@@ -217,7 +248,6 @@ class EnsemblePredictor:
             total_id_reco_tags[_id] = list(
                 map(lambda x: x[0], sorted(filtered_tags, key=lambda x: x[1], reverse=True)))[:pred_tags_num]
 
-            # 정렬하고 자르기
             answers.append({
                 "id": _id,
                 "songs": label_info.label_encoder.inverse_transform(total_id_reco_songs[_id]),
@@ -226,19 +256,25 @@ class EnsemblePredictor:
         return answers
 
 
-
 if __name__ == "__main__":
     gpu = 4
 
     label_info = util.load(os.path.join(parameters.base_dir, parameters.label_info))
     sp = spm.SentencePieceProcessor(model_file=os.path.join(parameters.base_dir, parameters.bpe_model_file))
 
-    plylst_title_restore = 20
-    songs_tags_restore = 20
-    plylst_title_saver_path = 'saver_new_titleAE_emb128_stack4_head4_lr_0.00050_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
+    plylst_title_restore = 70
+    songs_tags_restore = 145
+    plylst_title_saver_path = 'saver_decay_new_titleAE_emb128_stack4_head4_lr_0.00010_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
         plylst_title_restore)
-    songs_tags_saver_path = 'saver_new_AE_batch_emb128_stack4_head4_lr_0.00050_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
+    songs_tags_saver_path = 'saver_decay_new_AE_batch_emb128_stack4_head4_lr_0.00050_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
         songs_tags_restore)
+
+    # plylst_title_restore = 75
+    # songs_tags_restore = 90
+    # plylst_title_saver_path = 'saver_decay_new_titleAE_emb128_stack4_head4_lr_0.00010_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
+    #     plylst_title_restore)
+    # songs_tags_saver_path = 'saver_decay_new_AE_batch_emb128_stack4_head4_lr_0.00080_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
+    #     songs_tags_restore)
 
     print(plylst_title_saver_path)
     print(songs_tags_saver_path)
@@ -246,15 +282,21 @@ if __name__ == "__main__":
     # predictor
     self = EnsemblePredictor(plylst_title_saver_path, songs_tags_saver_path, label_info, sp)
 
-    val_set = util.load_json('dataset/questions/val.json')
+    # val_set = util.load_json('dataset/questions/val.json')
+    val_set = util.load_json(input_path)
+
     song_meta = util.load_json('dataset/song_meta.json')
 
-    plylst_title_weight = [0.5, 1.0, 0.8, 0.7, 0.3, 0.1, 5.0]
+    plylst_title_song_weight = 0.8
+    plylst_title_tag_weight = 1.5
 
-    for weight in plylst_title_weight:
-        reco_result = self.predict(val_set, song_meta, pred_songs_num=100, pred_tags_num=10,
-                                   plylst_title_weight=weight)
-        util.write_json(reco_result, "results/results_%0.2f.json" % weight)
+    print(input_path)
+    print(os.path.join(output_path,
+                       "results_%0.3f_%0.3f.json" % (plylst_title_song_weight, plylst_title_tag_weight)))
 
-
-
+    reco_result = self.predict(val_set, song_meta, pred_songs_num=100, pred_tags_num=10,
+                               plylst_title_song_weight=plylst_title_song_weight,
+                               plylst_title_tag_weight=plylst_title_tag_weight)
+    util.write_json(reco_result,
+                    os.path.join(output_path,
+                                 "results_%0.3f_%0.3f.json" % (plylst_title_song_weight, plylst_title_tag_weight)))
