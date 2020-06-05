@@ -16,15 +16,15 @@ if __name__ == "__main__":
         label_info = Label_info(train_set)
         util.dump(label_info, label_info_path)
 
-    train_input_output = songs_tags_util.make_model_input_output(train_set, label_info)
-    util.dump(train_input_output,
-              os.path.join(parameters.base_dir, parameters.songs_tags_transformer_train_input_output))
-
-    val_input_output = songs_tags_util.make_model_input_output(val_set, label_info)
-    util.dump(val_input_output,
-              os.path.join(parameters.base_dir, parameters.songs_tags_transformer_val_input_output))
+    # train_input_output = songs_tags_util.make_model_input_output(train_set, label_info)
+    # util.dump(train_input_output,
+    #           os.path.join(parameters.base_dir, parameters.songs_tags_transformer_train_input_output))
+    #
+    # val_input_output = songs_tags_util.make_model_input_output(val_set, label_info)
+    # util.dump(val_input_output,
+    #           os.path.join(parameters.base_dir, parameters.songs_tags_transformer_val_input_output))
 
     # validation을 위해 val set은 미리 고정해서 저장.
-    model_val_dataset = songs_tags_util.make_train_val_set(val_input_output, parameters.max_sequence_length,
+    model_val_dataset = songs_tags_util.make_train_val_set(val_set, parameters.max_sequence_length,
                                                            label_info, sample=30, shuffle=False)
     util.dump(model_val_dataset, os.path.join(parameters.base_dir, parameters.songs_tags_transformer_val_sampled_data))
