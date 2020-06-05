@@ -89,10 +89,10 @@ class TransformerEncoderAE:
 
         with tf.name_scope('predictor'):
             self.reco_songs, self.reco_songs_score = self.top_k(
-                predict=self.predict[:self.songs_num],
+                predict=self.predict[:, :self.songs_num],
                 top_k=self.song_top_k)
             self.reco_tags, self.reco_tags_score = self.top_k(
-                predict=self.predict[self.songs_num:self.songs_num + self.tags_num],
+                predict=self.predict[:, self.songs_num:],
                 top_k=self.tag_top_k)
             self.reco_tags += self.songs_num
 
