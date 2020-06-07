@@ -6,7 +6,10 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import re
 
+def remove_special_char(string):
+    return re.sub("[^가-힣a-zA-Z0-9 ]+", ' ', string).strip().lower()
 
 def convert_updt_date(updt_date):
     dtime = datetime.strptime(updt_date, '%Y-%m-%d %H:%M:%S.%f')
