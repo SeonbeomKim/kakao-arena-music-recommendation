@@ -140,8 +140,8 @@ class EnsemblePredictor:
         for each in tqdm(dataset, total=len(dataset)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            seen_songs = set(songs)
-            seen_tags = set(tags)
+            seen_songs = set(label_info.label_encoder.transform(songs))
+            seen_tags = set(label_info.label_encoder.transform(tags))
             plylst_title = each['plylst_title']
             plylst_updt_date = util.convert_updt_date(each["updt_date"])
             plylst_id = each["id"]
@@ -262,19 +262,19 @@ if __name__ == "__main__":
     label_info = util.load(os.path.join(parameters.base_dir, parameters.label_info))
     sp = spm.SentencePieceProcessor(model_file=os.path.join(parameters.base_dir, parameters.bpe_model_file))
 
-    plylst_title_restore = 70
-    songs_tags_restore = 145
-    plylst_title_saver_path = 'saver_decay_new_titleAE_emb128_stack4_head4_lr_0.00010_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
-        plylst_title_restore)
-    songs_tags_saver_path = 'saver_decay_new_AE_batch_emb128_stack4_head4_lr_0.00050_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
-        songs_tags_restore)
-
-    # plylst_title_restore = 75
-    # songs_tags_restore = 90
+    # plylst_title_restore = 70
+    # songs_tags_restore = 145
     # plylst_title_saver_path = 'saver_decay_new_titleAE_emb128_stack4_head4_lr_0.00010_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
     #     plylst_title_restore)
-    # songs_tags_saver_path = 'saver_decay_new_AE_batch_emb128_stack4_head4_lr_0.00080_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
+    # songs_tags_saver_path = 'saver_decay_new_AE_batch_emb128_stack4_head4_lr_0.00050_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
     #     songs_tags_restore)
+
+    plylst_title_restore = 75
+    songs_tags_restore = 56
+    plylst_title_saver_path = 'saver_decay_0.001_new_titleAE_emb128_stack4_head4_lr_0.00010_tags_loss_weight_1.00_negative_loss_weight_0.55/%d.ckpt' % (
+        plylst_title_restore)
+    songs_tags_saver_path = 'saver_decay_0.001_new_AE_batch_emb128_stack4_head4_lr_0.00080_tags_loss_weight_0.55_negative_loss_weight_0.55/%d.ckpt' % (
+        songs_tags_restore)
 
     print(plylst_title_saver_path)
     print(songs_tags_saver_path)
@@ -287,7 +287,7 @@ if __name__ == "__main__":
 
     song_meta = util.load_json('dataset/song_meta.json')
 
-    plylst_title_song_weight = 0.8
+    plylst_title_song_weight = 0.05
     plylst_title_tag_weight = 1.5
 
     print(input_path)
