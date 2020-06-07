@@ -7,15 +7,12 @@ import random
 
 from util import load_json, write_json
 
-np.random.seed(777)
-random.seed(777)
-
 
 class ArenaSplitter:
-    def _split_data(self, playlists, ratio=0.8):
+    def _split_data(self, playlists):
         tot = len(playlists)
-        train = playlists[:int(tot * ratio)]
-        val = playlists[int(tot * ratio):]
+        train = playlists[:int(tot * 0.80)]
+        val = playlists[int(tot * 0.80):]
 
         return train, val
 
@@ -75,6 +72,7 @@ class ArenaSplitter:
         return q, a
 
     def run(self, fname):
+        random.seed(777)
 
         print("Reading data...\n")
         playlists = load_json(fname)
@@ -89,24 +87,13 @@ class ArenaSplitter:
 
         print("Original train...")
         write_json(train, os.path.join(parent, "orig/train.json"))
-        # print("Original val...")
-        # write_json(val, os.path.join(parent, "orig/val.json"))
-
-        val, test = self._split_data(val, ratio=0.7)
         print("Original val...")
         write_json(val, os.path.join(parent, "orig/val.json"))
 
-        #
-        # print("Masked val...")
-        # val_q, val_a = self._mask_data(val)
-        # write_json(val_q, os.path.join(parent, "questions/val.json"))
-        # write_json(val_a, os.path.join(parent, "answers/val.json"))
-
-
-        print("Masked test...")
-        test_q, test_a = self._mask_data(test)
-        write_json(test_q, os.path.join(parent, "questions/test.json"))
-        write_json(test_a, os.path.join(parent, "answers/test.json"))
+        print("Masked val...")
+        val_q, val_a = self._mask_data(val)
+        write_json(val_q, os.path.join(parent, "questions/val.json"))
+        write_json(val_a, os.path.join(parent, "answers/val.json"))
 
 
 if __name__ == "__main__":
