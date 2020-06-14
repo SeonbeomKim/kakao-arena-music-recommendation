@@ -2,14 +2,13 @@ import argparse
 import os
 
 import numpy as np
-import sentencepiece as spm
 import tensorflow as tf
 from tqdm import tqdm
 
-import data_loader.plylst_title_util as plylst_title_util
+import data_loader.re_rank_util as re_rank_util
 import parameters
 import util
-from models.TransformerEncoderAE import TransformerEncoderAE
+from models.OrderlessBertAEReRank import OrderlessBertAE
 
 args = argparse.ArgumentParser()
 args.add_argument('--lr', type=float, default=0.001)
@@ -23,7 +22,6 @@ gpu = config.gpu
 
 def train(model, train_util, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5, negative_loss_weight=0.5):
     model_train_dataset = train_util.make_dataset(shuffle=True)
-
     loss = 0
 
     data_num = len(model_train_dataset['model_input'])
@@ -31,11 +29,13 @@ def train(model, train_util, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=
 
     for i in tqdm(range(epoch)):
         batch_input_sequence_indices = model_train_dataset['model_input'][batch_size * i: batch_size * (i + 1)]
+        batch_A_length = model_train_dataset['A_length'][batch_size * i: batch_size * (i + 1)]
         batch_sparse_label = util.label_to_sparse_label(
             model_train_dataset['label'][batch_size * i: batch_size * (i + 1)])
 
         _, _loss = sess.run([model.minimize, model.loss],
                             {model.input_sequence_indices: batch_input_sequence_indices,
+                             model.A_length: batch_A_length,
                              model.sparse_label: batch_sparse_label,
                              model.batch_size: min(len(batch_input_sequence_indices), batch_size),
                              model.keep_prob: keep_prob,
@@ -44,7 +44,9 @@ def train(model, train_util, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=
                              model.negative_loss_weight: negative_loss_weight
                              })
         loss += _loss
-    return loss / data_num
+
+    return loss / epoch
+
 
 def validation_ndcg(model, val_util, label_info, batch_size=64):
     dataset = val_util.ndcg_check_dataset
@@ -54,28 +56,27 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
     reco_result = []
     for i in tqdm(range(epoch)):
         batch_input_sequence_indices = dataset['model_input'][batch_size * i: batch_size * (i + 1)]
+        batch_A_length = dataset['A_length'][batch_size * i: batch_size * (i + 1)]
         batch_id_list = dataset['id_list'][batch_size * i: batch_size * (i + 1)]
+        batch_reco_songs = dataset['reco_songs'][batch_size * i: batch_size * (i + 1)]
+        batch_reco_tags = dataset['reco_tags'][batch_size * i: batch_size * (i + 1)]
 
         reco_songs, reco_tags = sess.run(
             [model.reco_songs, model.reco_tags],
             {model.input_sequence_indices: batch_input_sequence_indices,
+             model.A_length: batch_A_length,
+             model.songs_indices: batch_reco_songs,
+             model.tags_indices: batch_reco_tags,
              model.keep_prob: 1.0,
-             model.song_top_k: 1000,
-             model.tag_top_k: 100})
+             model.song_top_k: 100,
+             model.tag_top_k: 10})
 
-        for _reco_songs, _reco_tags, _id in zip(reco_songs, reco_tags, batch_id_list):
-            filtered_songs = []
-            for song in _reco_songs:
-                if len(filtered_songs) == 100:
-                    break
-                if song in val_util.id_seen_songs_dict[_id]:
-                    continue
-                if val_util.song_issue_dict[song] > val_util.id_plylst_updt_date_dict[_id]:
-                    continue
-                filtered_songs.append(song)
-            filtered_songs = label_info.label_encoder.inverse_transform(filtered_songs[:100])
-            filtered_tags = label_info.label_encoder.inverse_transform(
-                list(filter(lambda tag: tag not in val_util.id_seen_tags_dict[_id], _reco_tags))[:10])
+        for idx, (_reco_songs_indices, _reco_tags_indices, _id) in enumerate(zip(reco_songs, reco_tags, batch_id_list)):
+            filtered_songs = np.array(batch_reco_songs[idx])[_reco_songs_indices].tolist()
+            filtered_tags = np.array(batch_reco_tags[idx])[_reco_tags_indices].tolist()
+
+            filtered_songs = label_info.label_encoder.inverse_transform(filtered_songs)
+            filtered_tags = label_info.label_encoder.inverse_transform(filtered_tags)
             reco_result.append({'songs': filtered_songs, 'tags': filtered_tags})
 
     return val_util._eval(reco_result)
@@ -90,11 +91,13 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5, negati
 
     for i in tqdm(range(epoch)):
         batch_input_sequence_indices = dataset['model_input'][batch_size * i: batch_size * (i + 1)]
+        batch_A_length = dataset['A_length'][batch_size * i: batch_size * (i + 1)]
         batch_sparse_label = util.label_to_sparse_label(
             dataset['label'][batch_size * i: batch_size * (i + 1)])
 
         _loss = sess.run(model.loss,
                          {model.input_sequence_indices: batch_input_sequence_indices,
+                          model.A_length: batch_A_length,
                           model.sparse_label: batch_sparse_label,
                           model.batch_size: min(len(batch_input_sequence_indices), batch_size),
                           model.keep_prob: 1.0,
@@ -103,10 +106,7 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5, negati
                           })
         loss += _loss
 
-    return loss / data_num
-
-
-
+    return loss / epoch
 
 
 def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_size=512, keep_prob=0.9,
@@ -143,7 +143,6 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
                 [valid_loss_summary, valid_song_ndcg_summary, valid_tag_ndcg_summary, valid_score_summary])
             writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
 
-
     for epoch in range(restore + 1, 151):
         train_loss = train(model, train_util, lr, batch_size=batch_size, keep_prob=keep_prob,
                            tags_loss_weight=tags_loss_weight, negative_loss_weight=negative_loss_weight)
@@ -159,7 +158,6 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
             # tensorboard
             valid_loss = validation_loss(model, val_util, batch_size=batch_size, tags_loss_weight=tags_loss_weight,
                                          negative_loss_weight=negative_loss_weight)
-            # valid_loss =0.0
             music_ndcg, tag_ndcg, score = validation_ndcg(model, val_util, label_info, batch_size=batch_size)
 
             print("epoch: %d, valid_loss: %f, musin_ndcg: %f, tag_ndcg: %f, score: %f" % (
@@ -192,29 +190,32 @@ def make_transformer_embedding(songs_embedding, tags_embedding, label_info):
 
 # make train / val set
 train_set = util.load_json('dataset/orig/train.json')
+val_util = util.load(os.path.join(parameters.base_dir, 're_rank.val.pickle'))
 label_info = util.load(os.path.join(parameters.base_dir, parameters.label_info))
-sp = spm.SentencePieceProcessor(model_file=os.path.join(parameters.base_dir, parameters.bpe_model_file))
+song_meta = util.load_json('dataset/song_meta.json')
 
-train_util = plylst_title_util.TrainPlylstTitleUtil(train_set, parameters.title_max_sequence_length, label_info, sp)
-val_util = util.load(os.path.join(parameters.base_dir, parameters.plylst_title_transformer_val_sampled_data))
+train_util = re_rank_util.TrainReRankUtil(train_set, song_meta, parameters.max_sequence_length, label_info)
+del train_set
 
 songs_tags_wmf = util.load(os.path.join(parameters.base_dir, parameters.songs_tags_wmf))
-init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
+# init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
 
 
+l2_weight_decay = 0.0
+stack = 3
 # model
-model = TransformerEncoderAE(
-    voca_size=len(sp),
-    songs_tags_size=len(label_info.label_encoder.classes_),
-    embedding_size=parameters.embed_size,
+model = OrderlessBertAE(
+    voca_size=len(label_info.meta_label_encoder.classes_),
+    embedding_size=parameters.embed_size,  # 128인경우 850MB 먹음.
     is_embedding_scale=True,
-    max_sequence_length=parameters.title_max_sequence_length,
-    encoder_decoder_stack=parameters.stack,
+    max_sequence_length=parameters.max_sequence_length,
+    encoder_decoder_stack=stack,
     multihead_num=parameters.multihead,
-    pad_idx=sp.piece_to_id(label_info.pad_token),
+    pad_idx=label_info.meta_label_encoder.transform([label_info.pad_token])[0],
     unk_idx=label_info.label_encoder.transform([label_info.unk_token])[0],
     songs_num=len(label_info.songs),
-    tags_num=len(label_info.tags))
+    tags_num=len(label_info.tags),
+    l2_weight_decay=l2_weight_decay)
 
 # gpu 할당 및 session 생성
 os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)  # nvidia-smi의 k번째 gpu만 사용
@@ -223,10 +224,10 @@ config.gpu_options.allow_growth = True  # 필요한 만큼만 gpu 메모리 사�
 
 sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
-sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
+# sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
 
-tags_loss_weight = 0.55
-negative_loss_weight = 0.55
+tags_loss_weight = 0.50
+negative_loss_weight = 1.
 # # 학습 진행
 run(
     model,
@@ -234,8 +235,8 @@ run(
     train_util,
     val_util,
     label_info,
-    saver_path='./saver_title_emb%d_stack%d_head%d_lr_%0.5f_tags_loss_weight_%0.2f_negative_loss_weight_%0.2f' % (
-        parameters.embed_size, parameters.stack, parameters.multihead, lr, tags_loss_weight, negative_loss_weight),
+    saver_path='./saver_RERANK_20000_apply_no_pre_v3_song_tag_decay%0.3f_emb%d_stack%d_head%d_lr_%0.5f_tags_loss_weight_%0.2f_negative_loss_weight_%0.2f' % (
+        l2_weight_decay, parameters.embed_size, stack, parameters.multihead, lr, tags_loss_weight, negative_loss_weight),
     lr=lr,
     batch_size=bs,
     keep_prob=0.9,

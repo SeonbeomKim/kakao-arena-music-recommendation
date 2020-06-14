@@ -9,13 +9,15 @@ from data_loader.Label_info import Label_info
 
 if __name__ == "__main__":
     train_set = util.load_json('dataset/orig/train.json')
-    val_set = util.load_json('dataset/orig/val.json')
+    val_question = util.load_json('dataset/questions/val.json')
+    val_answers = util.load_json('dataset/answers/val.json')
+    song_meta = util.load_json('dataset/song_meta.json')
 
     label_info_path = os.path.join(parameters.base_dir, parameters.label_info)
     if os.path.exists(label_info_path):
         label_info = util.load(label_info_path)
     else:
-        label_info = Label_info(train_set)
+        label_info = Label_info(train_set, song_meta)
         util.dump(label_info, label_info_path)
 
     # bpe
@@ -34,16 +36,6 @@ if __name__ == "__main__":
 
     sp = spm.SentencePieceProcessor(model_file=model_file)
 
-    train_input_output = plylst_title_util.make_model_input_output(train_set, label_info)
-    util.dump(train_input_output,
-              os.path.join(parameters.base_dir, parameters.plylst_title_transformer_train_input_output))
-
-    val_input_output = plylst_title_util.make_model_input_output(val_set, label_info)
-    util.dump(val_input_output, os.path.join(parameters.base_dir, parameters.plylst_title_transformer_val_input_output))
-
-    # validation을 위해 val set은 미리 고정해서 저장.
-    model_val_dataset = plylst_title_util.make_train_val_set(val_input_output, parameters.title_max_sequence_length,
-                                                             label_info=label_info, sentencepiece=sp, sample=30,
-                                                             shuffle=False)
-    util.dump(model_val_dataset,
-              os.path.join(parameters.base_dir, parameters.plylst_title_transformer_val_sampled_data))
+    val_util = plylst_title_util.ValPlylstTitleUtil(val_question, val_answers, song_meta,
+                                                    parameters.title_max_sequence_length, label_info, sp)
+    util.dump(val_util, os.path.join(parameters.base_dir, parameters.plylst_title_transformer_val_sampled_data))

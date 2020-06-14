@@ -76,12 +76,12 @@ class OrderlessBertAE:
             tags_loss_mask = tf.cast(~tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num),
                                      tf.float32) * self.tags_loss_weight
             songs_loss_mask = tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num, tf.float32)
-            loss_mask = tf.expand_dims(songs_loss_mask + tags_loss_mask, axis=0) # [1, label]
+            loss_mask = tf.expand_dims(songs_loss_mask + tags_loss_mask, axis=0)  # [1, label]
 
             loss = label * tf.log(self.predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
                     (1 - label) * tf.log(1 - self.predict + 1e-10))
 
-            self.loss = tf.reduce_sum(
+            self.loss = tf.reduce_mean(
                 -tf.reduce_sum(loss * loss_mask, axis=-1))
 
         with tf.name_scope('predictor'):
