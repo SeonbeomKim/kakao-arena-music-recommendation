@@ -6,6 +6,10 @@ from tensorflow.keras import layers
 import numpy as np
 import sklearn
 
+"""
+Transformer Ref:
+    https://github.com/tensorflow/docs/blob/master/site/en/tutorials/text/transformer.ipynb
+"""
 
 class MultiHeadSelfAttention(layers.Layer):
     def __init__(self, embed_dim, num_heads=8):
