@@ -1,9 +1,49 @@
 import json
 import os
 import pickle
+import random
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import re
+
+def remove_special_char(string):
+    return re.sub("[^가-힣a-zA-Z0-9 ]+", ' ', string).strip().lower()
+
+def convert_updt_date(updt_date):
+    dtime = datetime.strptime(updt_date, '%Y-%m-%d %H:%M:%S.%f')
+    return int(dtime.strftime("%Y%m%d"))
+
+
+def select_bucket(data_size, bucket_size):
+    for bucket in bucket_size:
+        if data_size <= bucket:
+            return bucket
+    return None
+
+def label_to_sparse_label(label):
+    sparse_label = []
+    for row in range(len(label)):
+        for _label in label[row]:
+            sparse_label.append([row, _label])
+    return sparse_label
+
+def get_k_negative_label(positive_label_set, total_label, k):
+    negative_label = []
+
+    for _negative in random.sample(total_label, k + len(positive_label_set)):
+        if len(negative_label) == k:
+            break
+        if _negative in positive_label_set:
+            continue
+        if _negative in negative_label:
+            continue
+        negative_label.append(_negative)
+
+    if len(negative_label) != k:
+        print('%d != %d' % (len(negative_label), k))
+    return negative_label
 
 
 def dump(data, fname):
@@ -53,37 +93,45 @@ def fill_na(data, fill_value=0):
 
 
 class LabelEncoder:
-    def __init__(self, unk_token='@unk'):
-        self.classes_ = None
+    def __init__(self, tokens=[], unk_token=''):
+        # tokens = ['@cls', '@sep', '@mask', '@pad']
+        # unk_token: @unk, deep learning으로 학습할 때, unk 필요한 경우
+
+        self.classes_ = []
         self.data_to_label = {}
-        self.label_to_data = []
+        self.tokens = tokens
         self.unk_token = unk_token
 
     def fit(self, data_list):
-        for data in data_list + [self.unk_token]:
-            if data not in self.data_to_label:
-                self.data_to_label[data] = len(self.data_to_label)
-                self.label_to_data.append(data)
-        self.classes_ = self.label_to_data
+        _data_list = data_list[:]  # copy
+        if self.tokens:
+            _data_list += self.tokens
+        if self.unk_token:
+            _data_list += [self.unk_token]
 
-    def fit_transform(self, data_list):
-        trans_data = []
-        for data in data_list + [self.unk_token]:
+        for data in _data_list:
             if data not in self.data_to_label:
                 self.data_to_label[data] = len(self.data_to_label)
-                self.label_to_data.append(data)
-            trans_data.append((self.data_to_label[data]))
-        self.classes_ = self.label_to_data
-        return trans_data[:-1]  # unk_token 제외
+                self.classes_.append(data)
 
     def transform(self, data_list):
         trans_data = []
+
+        if self.unk_token:
+            unk_label = self.data_to_label[self.unk_token]
+        else:
+            unk_label = None
+
         for data in data_list:
-            trans_data.append(self.data_to_label.get(data, self.data_to_label[self.unk_token]))
+            trans_data.append(self.data_to_label.get(data, unk_label))
         return trans_data
+
+    def fit_transform(self, data_list):
+        self.fit(data_list)
+        return self.transform(data_list)
 
     def inverse_transform(self, data_list):
         inverse = []
         for data in data_list:
-            inverse.append(self.label_to_data[data])
+            inverse.append(self.classes_[data])
         return inverse
