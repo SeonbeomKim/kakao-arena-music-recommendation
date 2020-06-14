@@ -21,7 +21,7 @@ gpu = config.gpu
 
 
 def train(model, train_util, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5, negative_loss_weight=0.5):
-    model_train_dataset = train_util.make_dataset(shuffle=True)
+    model_train_dataset = train_util.make_dataset_v3(shuffle=True)
     loss = 0
 
     data_num = len(model_train_dataset['model_input'])
@@ -45,7 +45,7 @@ def train(model, train_util, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=
                              })
         loss += _loss
 
-    return loss / data_num
+    return loss / epoch
 
 
 def validation_ndcg(model, val_util, label_info, batch_size=64):
@@ -64,8 +64,8 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
             {model.input_sequence_indices: batch_input_sequence_indices,
              model.A_length: batch_A_length,
              model.keep_prob: 1.0,
-             model.song_top_k: 1000,
-             model.tag_top_k: 100})
+             model.song_top_k: 300,
+             model.tag_top_k: 30})
 
         for _reco_songs, _reco_tags, _id in zip(reco_songs, reco_tags, batch_id_list):
             filtered_songs = []
@@ -80,9 +80,14 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
             filtered_songs = label_info.label_encoder.inverse_transform(filtered_songs[:100])
             filtered_tags = label_info.label_encoder.inverse_transform(
                 list(filter(lambda tag: tag not in val_util.id_seen_tags_dict[_id], _reco_tags))[:10])
-            reco_result.append({'songs': filtered_songs, 'tags': filtered_tags})
 
-    return val_util._eval(reco_result)
+            #candidate_songs = label_info.label_encoder.inverse_transform(
+            #        list(filter(lambda x:x not in val_util.id_seen_songs_dict[_id], _reco_songs)))
+            #candidate_tags = label_info.label_encoder.inverse_transform(
+            #        list(filter(lambda x:x not in val_util.id_seen_tags_dict[_id], _reco_tags)))
+            #reco_result.append({'songs': candidate_songs, 'tags': candidate_tags, 'id':_id})
+            reco_result.append({'songs': filtered_songs, 'tags' : filtered_tags, 'id': _id})
+    return val_util._eval(reco_result), reco_result
 
 
 def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5, negative_loss_weight=0.5):
@@ -109,7 +114,7 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5, negati
                           })
         loss += _loss
 
-    return loss / data_num
+    return loss / epoch
 
 
 def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_size=512, keep_prob=0.9,
@@ -136,9 +141,9 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
 
             train_loss_summary = tf.summary.scalar("train_loss", train_loss_tensorboard)
             valid_loss_summary = tf.summary.scalar("valid_loss", valid_loss_tensorboard)
-            valid_song_ndcg_summary = tf.summary.scalar("valid_song_ndcg", valid_loss_tensorboard)
-            valid_tag_ndcg_summary = tf.summary.scalar("valid_tag_ndcg", valid_loss_tensorboard)
-            valid_score_summary = tf.summary.scalar("valid_score", valid_loss_tensorboard)
+            valid_song_ndcg_summary = tf.summary.scalar("valid_song_ndcg", valid_song_ndcg_tensorboard)
+            valid_tag_ndcg_summary = tf.summary.scalar("valid_tag_ndcg", valid_tag_ndcg_tensorboard)
+            valid_score_summary = tf.summary.scalar("valid_score", valid_score_tensorboard)
 
             # merged = tf.summary.merge_all()
             merged_train = tf.summary.merge([train_loss_summary])
@@ -161,7 +166,8 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
             # tensorboard
             valid_loss = validation_loss(model, val_util, batch_size=batch_size, tags_loss_weight=tags_loss_weight,
                                          negative_loss_weight=negative_loss_weight)
-            music_ndcg, tag_ndcg, score = validation_ndcg(model, val_util, label_info, batch_size=batch_size)
+            (music_ndcg, tag_ndcg, score), reco_result = validation_ndcg(model, val_util, label_info, batch_size=batch_size)
+            util.dump(reco_result, os.path.join(saver_path, str(epoch) + "reco_result.pickle"))
 
             print("epoch: %d, valid_loss: %f, musin_ndcg: %f, tag_ndcg: %f, score: %f" % (
                 epoch, valid_loss, music_ndcg, tag_ndcg, score))
@@ -195,14 +201,17 @@ def make_transformer_embedding(songs_embedding, tags_embedding, label_info):
 train_set = util.load_json('dataset/orig/train.json')
 val_util = util.load(os.path.join(parameters.base_dir, parameters.songs_tags_transformer_val_sampled_data))
 label_info = util.load(os.path.join(parameters.base_dir, parameters.label_info))
+song_meta = util.load_json('dataset/song_meta.json')
 
 
-train_util = songs_tags_util.TrainSongsTagsUtil(train_set, parameters.max_sequence_length, label_info)
+train_util = songs_tags_util.TrainSongsTagsUtil(train_set, song_meta, parameters.max_sequence_length, label_info)
 del train_set
 
 songs_tags_wmf = util.load(os.path.join(parameters.base_dir, parameters.songs_tags_wmf))
-init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
+# init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
 
+
+l2_weight_decay = 0.
 # model
 model = OrderlessBertAE(
     voca_size=len(label_info.label_encoder.classes_),
@@ -214,7 +223,8 @@ model = OrderlessBertAE(
     pad_idx=label_info.label_encoder.transform([label_info.pad_token])[0],
     unk_idx=label_info.label_encoder.transform([label_info.unk_token])[0],
     songs_num=len(label_info.songs),
-    tags_num=len(label_info.tags))
+    tags_num=len(label_info.tags),
+    l2_weight_decay=l2_weight_decay)
 
 # gpu 할당 및 session 생성
 os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)  # nvidia-smi의 k번째 gpu만 사용
@@ -223,10 +233,10 @@ config.gpu_options.allow_growth = True  # 필요한 만큼만 gpu 메모리 사�
 
 sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
-sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
+# sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
 
-tags_loss_weight = 0.30
-negative_loss_weight = 0.55
+tags_loss_weight = 0.5
+negative_loss_weight = 1.0
 # # 학습 진행
 run(
     model,
@@ -234,8 +244,8 @@ run(
     train_util,
     val_util,
     label_info,
-    saver_path='./saver_song_tag_emb%d_stack%d_head%d_lr_%0.5f_tags_loss_weight_%0.2f_negative_loss_weight_%0.2f' % (
-        parameters.embed_size, parameters.stack, parameters.multihead, lr, tags_loss_weight, negative_loss_weight),
+    saver_path='./saver_MAKE_RECO_FILE_no_pre_v3_song_tag_decay%0.3f_emb%d_stack%d_head%d_lr_%0.5f_tags_loss_weight_%0.2f_negative_loss_weight_%0.2f_bs_%d' % (
+        l2_weight_decay, parameters.embed_size, parameters.stack, parameters.multihead, lr, tags_loss_weight, negative_loss_weight, bs),
     lr=lr,
     batch_size=bs,
     keep_prob=0.9,
