@@ -15,7 +15,7 @@ if __name__ == "__main__":
     if os.path.exists(label_info_path):
         label_info = util.load(label_info_path)
     else:
-        label_info = Label_info(train_set)
+        label_info = Label_info(train_set, song_meta)
         util.dump(label_info, label_info_path)
 
     val_util = songs_tags_util.ValSongsTagsUtil(val_question, val_answers, song_meta, parameters.max_sequence_length, label_info)
