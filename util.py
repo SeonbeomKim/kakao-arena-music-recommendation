@@ -3,18 +3,73 @@ import os
 import pickle
 import random
 from datetime import datetime
-
+import parameters
 import numpy as np
-import pandas as pd
+# import pandas as pd
 import re
 
+
+def get_song_issue_dict(train_set, song_meta, label_info):
+    all_songs_set = set(label_info.songs)
+
+    song_issue_dict = {}
+    for each in song_meta:
+        song_issue_dict[each["id"]] = int(each['issue_date'])
+
+    strange_song_issue_dict = {}
+    for each in train_set:
+        plylst_updt_date = convert_updt_date(each["updt_date"])
+        songs = list(filter(lambda song: song in all_songs_set, each['songs']))
+        for song in songs:
+            if song_issue_dict[song] <= plylst_updt_date and song_issue_dict[song] != 0:
+                continue
+
+            if song not in strange_song_issue_dict:
+                strange_song_issue_dict[song] = []
+            strange_song_issue_dict[song].append(plylst_updt_date)
+
+    for song in strange_song_issue_dict:
+        song_issue_dict[song] = min(strange_song_issue_dict[song])
+    return song_issue_dict
+
+def get_song_issue_dict2(train_set, song_meta, label_info):
+    all_songs_set = set(label_info.songs)
+
+    song_issue_dict = {}
+    for each in song_meta:
+        song_issue_dict[each["id"]] = int(each['issue_date'])
+
+    strange_song_issue_dict = {}
+    for each in train_set:
+        plylst_updt_date = convert_updt_date(each["updt_date"])
+        songs = list(filter(lambda song: song in all_songs_set, each['songs']))
+        for song in songs:
+            if song_issue_dict[song] <= plylst_updt_date:
+                continue
+
+            if song not in strange_song_issue_dict:
+                strange_song_issue_dict[song] = []
+            strange_song_issue_dict[song].append(plylst_updt_date)
+
+    for song in strange_song_issue_dict:
+        song_issue_dict[song] = min(strange_song_issue_dict[song])
+    return song_issue_dict
+
 def remove_special_char(string):
-    return re.sub("[^가-힣a-zA-Z0-9 ]+", ' ', string).strip().lower()
+    return re.sub("[^가-힣a-zA-Z0-9& ]+", ' ', string).strip().lower() # R&B
 
 def convert_updt_date(updt_date):
     dtime = datetime.strptime(updt_date, '%Y-%m-%d %H:%M:%S.%f')
     return int(dtime.strftime("%Y%m%d"))
 
+def get_year_label(updt_date):
+    # base_year 미만은 0, base_year는 1, 나머지는 1씩 증가
+    updt_date = convert_updt_date(updt_date)
+    year = int(str(updt_date)[:4])
+    if year < parameters.base_year:
+        return '@old'
+    else:
+        return '@%d' % year
 
 def select_bucket(data_size, bucket_size):
     for bucket in bucket_size:
@@ -85,11 +140,11 @@ def write_json(data, fname):
         f.write(json_str)
 
 
-def fill_na(data, fill_value=0):
-    # data:[[1,2],[1],[1,2,3]]
-    # return: [[1,2,fill_value], [1,fill_value,fill_value], [1,2,3]]
-    df = pd.DataFrame(data)
-    return df.fillna(fill_value).values  # numpy type
+# def fill_na(data, fill_value=0):
+#     # data:[[1,2],[1],[1,2,3]]
+#     # return: [[1,2,fill_value], [1,fill_value,fill_value], [1,2,3]]
+#     df = pd.DataFrame(data)
+#     return df.fillna(fill_value).values  # numpy type
 
 
 class LabelEncoder:
