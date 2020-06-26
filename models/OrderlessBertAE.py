@@ -1,15 +1,11 @@
-# https://arxiv.org/abs/1706.03762 Attention Is All You Need(Transformer)
-# https://arxiv.org/abs/1607.06450 Layer Normalization
-# https://arxiv.org/abs/1512.00567 Label Smoothing
-
 import tensorflow as tf  # version 1.4
-
-tf.set_random_seed(787)
 
 
 class OrderlessBertAE:
     def __init__(self, voca_size, embedding_size, is_embedding_scale, max_sequence_length,
-                 encoder_decoder_stack, multihead_num, pad_idx, unk_idx, songs_num, tags_num, l2_weight_decay=0.001):
+                 encoder_decoder_stack, multihead_num, pad_idx, songs_num, tags_num):
+
+        tf.set_random_seed(888)  # 787
 
         self.voca_size = voca_size
         self.embedding_size = embedding_size
@@ -18,10 +14,9 @@ class OrderlessBertAE:
         self.encoder_decoder_stack = encoder_decoder_stack
         self.multihead_num = multihead_num
         self.pad_idx = pad_idx  # <'pad'> symbol index
-        self.unk_idx = unk_idx  # <'pad'> symbol index
         self.songs_num = songs_num  # song 노래 개수, song label은 [0, songs_num) 으로 달려 있어야 함.
         self.tags_num = tags_num
-        self.l2_weight_decay = l2_weight_decay
+
 
         with tf.name_scope("placeholder"):
             self.lr = tf.placeholder(tf.float32)
@@ -34,8 +29,7 @@ class OrderlessBertAE:
             self.input_sequence_indices = tf.placeholder(tf.int32, [None, None], name='input_sequence_indices')
 
             # cls_idx || song indices || sep_idx 까지가 A 길이
-            self.A_length = tf.placeholder(tf.int32, [None], name='A_length')
-            self.sparse_label = tf.placeholder(dtype=tf.int64, shape=[None, 2])
+            self.sparse_label = tf.placeholder(dtype=tf.int64, shape=[None, 2], name='sparse_label')
             self.batch_size = tf.placeholder(dtype=tf.int32)
 
             # self.negative_item_idx = tf.placeholder(tf.int32, [None, None], name='negative_item_idx')
@@ -43,25 +37,22 @@ class OrderlessBertAE:
             # dropout (each sublayers before add and norm)  and  (sums of the embeddings and the PE) and (attention)
 
         with tf.name_scope("embedding_table"):
-            self.song_tag_embedding_table = tf.get_variable(
+            self.songs_tags_embedding_table = tf.get_variable(
                 # https://github.com/tensorflow/models/blob/master/official/transformer/model/embedding_layer.py
-                'song_tag_embedding_table',
+                'songs_tags_embedding_table',
                 [self.voca_size, self.embedding_size],
                 initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
 
-            self.segment_embedding_table = tf.get_variable(  # [2, self.embedding_size]
-                'segment_embedding_table',
-                [2, self.embedding_size],
-                initializer=tf.truncated_normal_initializer(stddev=0.02))
 
         with tf.name_scope('encoder'):
-            encoder_input_embedding, encoder_input_mask = self.embedding_and_PE(self.input_sequence_indices,
-                                                                                self.A_length)
+            encoder_input_embedding, encoder_input_mask = self.embedding_and_PE(self.input_sequence_indices)
             self.encoder_embedding = self.encoder(encoder_input_embedding, encoder_input_mask)
 
         with tf.name_scope('sequence_embedding'):
             # get cls embedding
-            self.sequence_embedding = self.encoder_embedding[:, 0, :]  # [N, self.embedding_size]
+            self.song_cls_embedding = self.encoder_embedding[:, 0, :]  # [N, self.embedding_size]
+            self.tag_cls_embedding = self.encoder_embedding[:, 1, :]  # [N, self.embedding_size]
+
 
         with tf.name_scope('label'):
             label_sparse_tensor = tf.SparseTensor(indices=self.sparse_label,
@@ -69,42 +60,51 @@ class OrderlessBertAE:
                                                   dense_shape=[self.batch_size, self.songs_num + self.tags_num])
             label = tf.sparse_tensor_to_dense(label_sparse_tensor, validate_indices=False)
 
+            song_label = label[:, :self.songs_num]
+            tag_label = label[:, self.songs_num:]
+
         with tf.name_scope('trainer'):
-            self.predict = tf.nn.sigmoid(
-                tf.matmul(self.sequence_embedding, self.song_tag_embedding_table[:self.songs_num + self.tags_num, :],
-                          transpose_b=True))
-            tags_loss_mask = tf.cast(~tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num),
-                                     tf.float32) * self.tags_loss_weight
-            songs_loss_mask = tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num, tf.float32)
-            loss_mask = tf.expand_dims(songs_loss_mask + tags_loss_mask, axis=0)  # [1, label]
+            song_embedding_table = self.songs_tags_embedding_table[:self.songs_num, :]
+            tag_embedding_table = self.songs_tags_embedding_table[self.songs_num:self.songs_num + self.tags_num, :]
 
-            loss = label * tf.log(self.predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
-                    (1 - label) * tf.log(1 - self.predict + 1e-10))
+            song_predict = tf.nn.sigmoid(
+                tf.matmul(self.song_cls_embedding, song_embedding_table, transpose_b=True))
+            tag_predict = tf.nn.sigmoid(
+                tf.matmul(self.tag_cls_embedding, tag_embedding_table, transpose_b=True))
 
-            self.loss = tf.reduce_mean(
-                -tf.reduce_sum(loss * loss_mask, axis=-1))
+            song_loss = song_label * tf.log(song_predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
+                    (1 - song_label) * tf.log(1 - song_predict + 1e-10))
+            tag_loss = tag_label * tf.log(tag_predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
+                    (1 - tag_label) * tf.log(1 - tag_predict + 1e-10))
+
+            self.loss = tf.reduce_mean(-tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
+                -tf.reduce_mean(tag_loss, axis=-1))
+
 
         with tf.name_scope('predictor'):
             self.reco_songs, self.reco_songs_score = self.top_k(
-                predict=self.predict[:, :self.songs_num],
+                predict=song_predict,
                 top_k=self.song_top_k)
             self.reco_tags, self.reco_tags_score = self.top_k(
-                predict=self.predict[:, self.songs_num:],
+                predict=tag_predict,
                 top_k=self.tag_top_k)
             self.reco_tags += self.songs_num
 
-        with tf.name_scope('norm'):
-            # l2 norm
-            variables = tf.trainable_variables()
-            l2_norm = self.l2_weight_decay * tf.reduce_sum(
-                [tf.nn.l2_loss(i) for i in variables if
-                 ('LayerNorm' not in i.name and 'bias' not in i.name)]
-            )
-            print(self.l2_weight_decay)
+
+            self.songs_indices = tf.placeholder(tf.int32, [None, None], name='songs_indices')
+            songs_embedding = tf.nn.embedding_lookup(  # [N, data_length, self.embedding_size]
+                self.songs_tags_embedding_table,
+                self.songs_indices)
+            songs_predict = tf.matmul(
+                tf.expand_dims(self.song_cls_embedding, axis=1),  # [N, 1, emb]
+                tf.transpose(songs_embedding, [0, 2, 1]))[:, 0, :]
+            self.new_reco_songs, self.new_reco_songs_score = self.top_k(
+                predict=songs_predict,
+                top_k=self.song_top_k)
 
         with tf.name_scope('optimizer'):
             optimizer = tf.train.AdamOptimizer(self.lr, beta1=0.9, beta2=0.98, epsilon=1e-9)
-        self.minimize = optimizer.minimize(self.loss + l2_norm)
+            self.minimize = optimizer.minimize(self.loss)
 
         with tf.name_scope("saver"):
             self.saver = tf.train.Saver(max_to_keep=10000)
@@ -116,21 +116,13 @@ class OrderlessBertAE:
 
         return reco.indices, reco.values  # [N, top_k]
 
-    def embedding_and_PE(self, data, A_length):
+    def embedding_and_PE(self, data):
         # data: [N, data_length]
 
         # embedding lookup and scale
         embedding = tf.nn.embedding_lookup(  # [N, data_length, self.embedding_size]
-            self.song_tag_embedding_table,
+            self.songs_tags_embedding_table,
             data)
-
-        A_B_sequence_mask = tf.sequence_mask(
-            A_length,
-            tf.shape(data)[1])  # [N, data_length], A:1, B:0
-
-        SE = tf.nn.embedding_lookup(  # [N, data_length, self.embedding_size]
-            self.segment_embedding_table,
-            tf.cast(A_B_sequence_mask, tf.int32))
 
         if self.is_embedding_scale is True:
             embedding *= self.embedding_size ** 0.5
@@ -139,9 +131,6 @@ class OrderlessBertAE:
             tf.cast(tf.not_equal(data, self.pad_idx), dtype=tf.float32),  # [N, data_length]
             axis=-1
         )  # [N, data_length, 1]
-
-        # Add Segment Encoding
-        embedding += SE
 
         # pad masking
         embedding *= embedding_mask
