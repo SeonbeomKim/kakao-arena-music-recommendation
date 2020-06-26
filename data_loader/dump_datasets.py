@@ -27,6 +27,3 @@ _train_set = util.load_json('dataset/train.json')
 song_issue_dict = util.get_song_issue_dict(_train_set, song_meta, label_info)
 util.dump(song_issue_dict, os.path.join(parameters.base_dir, parameters.song_issue_dict))
 
-song_issue_dict2 = util.get_song_issue_dict2(_train_set, song_meta, label_info)
-util.dump(song_issue_dict, os.path.join(parameters.base_dir, 'test_song_issue_dict.pickle'))
-
