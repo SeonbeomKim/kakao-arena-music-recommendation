@@ -5,13 +5,12 @@ class Label_info:
     def __init__(self, dataset, song_meta, songs_recall=0.9, tags_recall=0.95):
         self.songs = []
         self.tags = []
-        self.label_weight = []
-        self.cls_token = '@cls'
+        self.cls_tokens = ['@song_cls', '@tag_cls']
         self.sep_token = '@sep'
         self.mask_token = '@mask'
         self.pad_token = '@pad'
         self.unk_token = '@unk'
-        self.others_for_encoder = [self.cls_token, self.sep_token, self.mask_token,
+        self.others_for_encoder = self.cls_tokens + [self.sep_token, self.mask_token,
                                    self.pad_token]  # TODO mask는 안쓰면 나중에 지우자.
 
         self.label_encoder = util.LabelEncoder(tokens=self.others_for_encoder, unk_token=self.unk_token)
@@ -21,6 +20,11 @@ class Label_info:
         self.artist = []
         self.meta_label_encoder = util.LabelEncoder(tokens=self.others_for_encoder, unk_token=self.unk_token)
         self.set_meta_label_encoder(self.songs, song_meta)
+
+        self.album = []
+        self.album_label_encoder = util.LabelEncoder(tokens=self.others_for_encoder, unk_token=self.unk_token)
+        self.set_album_label_encoder(self.songs, song_meta)
+
 
     def filter_row_freq_item(self, dataset, item_key, recall=0.9):
         freq_dict = {}
@@ -55,24 +59,6 @@ class Label_info:
         self.songs, songs_freq = self.filter_row_freq_item(dataset, 'songs', recall=songs_recall)
         self.tags, tags_freq = self.filter_row_freq_item(dataset, 'tags', recall=tags_recall)
 
-        '''
-        >>> a = np.random.randint(3, 10, 5)
-        >>> a
-        array([5, 5, 7, 3, 3])
-        >>> 1/a
-        array([0.2       , 0.2       , 0.14285714, 0.33333333, 0.33333333])
-        >>> 1/a * np.min(a)
-        array([0.6       , 0.6       , 0.42857143, 1.        , 1.        ])
-        >>> 1/a * np.min(a) * a
-        array([3., 3., 3., 3., 3.])
-        '''
-        songs_label_weight = np.array(songs_freq, dtype=np.float32)
-        songs_label_weight = 1 / songs_label_weight * np.min(songs_label_weight)
-
-        tags_label_weight = np.array(tags_freq, dtype=np.float32)
-        tags_label_weight = 1 / tags_label_weight * np.min(tags_label_weight)
-
-        self.label_weight = np.concatenate((songs_label_weight, tags_label_weight))
         self.label_encoder.fit(self.songs + self.tags)
 
     def set_meta_label_encoder(self, songs, song_meta):
@@ -89,3 +75,15 @@ class Label_info:
         self.genre = list(genre_set)
         self.artist = list(artist_set)
         self.meta_label_encoder.fit(self.genre + self.artist)
+
+    def set_album_label_encoder(self, songs, song_meta):
+        songs_set = set(songs)
+        album_set = set()
+
+        for each in song_meta:
+            if each['id'] not in songs_set:
+                continue
+            album_set.add(each['album_id'])
+
+        self.album = list(album_set)
+        self.album_label_encoder.fit(self.album)
