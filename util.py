@@ -9,30 +9,30 @@ import numpy as np
 import re
 
 
+# def get_song_issue_dict(train_set, song_meta, label_info):
+#     all_songs_set = set(label_info.songs)
+#
+#     song_issue_dict = {}
+#     for each in song_meta:
+#         song_issue_dict[each["id"]] = int(each['issue_date'])
+#
+#     strange_song_issue_dict = {}
+#     for each in train_set:
+#         plylst_updt_date = convert_updt_date(each["updt_date"])
+#         songs = list(filter(lambda song: song in all_songs_set, each['songs']))
+#         for song in songs:
+#             if song_issue_dict[song] <= plylst_updt_date and song_issue_dict[song] != 0:
+#                 continue
+#
+#             if song not in strange_song_issue_dict:
+#                 strange_song_issue_dict[song] = []
+#             strange_song_issue_dict[song].append(plylst_updt_date)
+#
+#     for song in strange_song_issue_dict:
+#         song_issue_dict[song] = min(strange_song_issue_dict[song])
+#     return song_issue_dict
+
 def get_song_issue_dict(train_set, song_meta, label_info):
-    all_songs_set = set(label_info.songs)
-
-    song_issue_dict = {}
-    for each in song_meta:
-        song_issue_dict[each["id"]] = int(each['issue_date'])
-
-    strange_song_issue_dict = {}
-    for each in train_set:
-        plylst_updt_date = convert_updt_date(each["updt_date"])
-        songs = list(filter(lambda song: song in all_songs_set, each['songs']))
-        for song in songs:
-            if song_issue_dict[song] <= plylst_updt_date and song_issue_dict[song] != 0:
-                continue
-
-            if song not in strange_song_issue_dict:
-                strange_song_issue_dict[song] = []
-            strange_song_issue_dict[song].append(plylst_updt_date)
-
-    for song in strange_song_issue_dict:
-        song_issue_dict[song] = min(strange_song_issue_dict[song])
-    return song_issue_dict
-
-def get_song_issue_dict2(train_set, song_meta, label_info):
     all_songs_set = set(label_info.songs)
 
     song_issue_dict = {}
