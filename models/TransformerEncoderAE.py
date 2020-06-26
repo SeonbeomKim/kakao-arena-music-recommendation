@@ -8,21 +8,18 @@ tf.set_random_seed(787)
 
 
 class TransformerEncoderAE:
-    def __init__(self, voca_size, songs_tags_size, embedding_size, is_embedding_scale, max_sequence_length,
-                 encoder_decoder_stack, multihead_num, pad_idx, unk_idx, songs_num, tags_num, l2_weight_decay=0.001):
+    def __init__(self, voca_size, embedding_size, is_embedding_scale, max_sequence_length,
+                 encoder_decoder_stack, multihead_num, pad_idx, songs_num, tags_num):
 
         self.voca_size = voca_size
-        self.songs_tags_size = songs_tags_size
         self.embedding_size = embedding_size
         self.is_embedding_scale = is_embedding_scale  # True or False
         self.max_sequence_length = max_sequence_length
         self.encoder_decoder_stack = encoder_decoder_stack
         self.multihead_num = multihead_num
         self.pad_idx = pad_idx  # <'pad'> symbol index
-        self.unk_idx = unk_idx  # <'pad'> symbol index
         self.songs_num = songs_num  # song 노래 개수, song label은 [0, songs_num) 으로 달려 있어야 함.
         self.tags_num = tags_num
-        self.l2_weight_decay = l2_weight_decay
 
         with tf.name_scope("placeholder"):
             self.lr = tf.placeholder(tf.float32)
@@ -45,10 +42,10 @@ class TransformerEncoderAE:
                 [self.voca_size, self.embedding_size],
                 initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
 
-            self.song_tag_embedding_table = tf.get_variable(
+            self.songs_tags_embedding_table = tf.get_variable(
                 # https://github.com/tensorflow/models/blob/master/official/transformer/model/embedding_layer.py
-                'song_tag_embedding_table',
-                [self.songs_tags_size, self.embedding_size],
+                'songs_tags_embedding_table',
+                [self.songs_num+self.tags_num, self.embedding_size],
                 initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
 
             # https://github.com/google-research/bert/blob/master/modeling.py
@@ -63,7 +60,8 @@ class TransformerEncoderAE:
 
         with tf.name_scope('sequence_embedding'):
             # get cls embedding
-            self.sequence_embedding = self.encoder_embedding[:, 0, :]  # [N, self.embedding_size]
+            self.song_cls_embedding = self.encoder_embedding[:, 0, :]  # [N, self.embedding_size]
+            self.tag_cls_embedding = self.encoder_embedding[:, 1, :]  # [N, self.embedding_size]
 
         with tf.name_scope('label'):
             label_sparse_tensor = tf.SparseTensor(indices=self.sparse_label,
@@ -71,43 +69,38 @@ class TransformerEncoderAE:
                                                   dense_shape=[self.batch_size, self.songs_num + self.tags_num])
             label = tf.sparse_tensor_to_dense(label_sparse_tensor, validate_indices=False)
 
+            song_label = label[:, :self.songs_num]
+            tag_label = label[:, self.songs_num:]
+
         with tf.name_scope('trainer'):
-            self.predict = tf.nn.sigmoid(
-                tf.matmul(self.sequence_embedding, self.song_tag_embedding_table[:self.songs_num + self.tags_num, :],
-                          transpose_b=True))
+            song_embedding_table = self.songs_tags_embedding_table[:self.songs_num, :]
+            tag_embedding_table = self.songs_tags_embedding_table[self.songs_num:self.songs_num + self.tags_num, :]
 
-            tags_loss_mask = tf.cast(~tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num),
-                                     tf.float32) * self.tags_loss_weight
-            songs_loss_mask = tf.sequence_mask(self.songs_num, self.songs_num + self.tags_num, tf.float32)
-            loss_mask = tf.expand_dims(songs_loss_mask + tags_loss_mask, axis=0) # [1, label]
+            song_predict = tf.nn.sigmoid(
+                tf.matmul(self.song_cls_embedding, song_embedding_table, transpose_b=True))
+            tag_predict = tf.nn.sigmoid(
+                tf.matmul(self.tag_cls_embedding, tag_embedding_table, transpose_b=True))
 
-            loss = label * tf.log(self.predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
-                    (1 - label) * tf.log(1 - self.predict + 1e-10))
+            song_loss = song_label * tf.log(song_predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
+                    (1 - song_label) * tf.log(1 - song_predict + 1e-10))
+            tag_loss = tag_label * tf.log(tag_predict + 1e-10) + self.negative_loss_weight * (  # [N, label]
+                    (1 - tag_label) * tf.log(1 - tag_predict + 1e-10))
 
-            self.loss = tf.reduce_sum(
-                -tf.reduce_sum(loss * loss_mask, axis=-1))
+            self.loss = tf.reduce_mean(-tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
+                -tf.reduce_mean(tag_loss, axis=-1))
 
         with tf.name_scope('predictor'):
             self.reco_songs, self.reco_songs_score = self.top_k(
-                predict=self.predict[:, :self.songs_num],
+                predict=song_predict,
                 top_k=self.song_top_k)
             self.reco_tags, self.reco_tags_score = self.top_k(
-                predict=self.predict[:, self.songs_num:],
+                predict=tag_predict,
                 top_k=self.tag_top_k)
             self.reco_tags += self.songs_num
 
-        with tf.name_scope('norm'):
-            # l2 norm
-            variables = tf.trainable_variables()
-            l2_norm = self.l2_weight_decay * tf.reduce_sum(
-                [tf.nn.l2_loss(i) for i in variables if
-                 ('LayerNorm' not in i.name and 'bias' not in i.name)]
-            )
-            print(self.l2_weight_decay)
-
         with tf.name_scope('optimizer'):
             optimizer = tf.train.AdamOptimizer(self.lr, beta1=0.9, beta2=0.98, epsilon=1e-9)
-            self.minimize = optimizer.minimize(self.loss + l2_norm)
+            self.minimize = optimizer.minimize(self.loss)
 
         with tf.name_scope("saver"):
             self.saver = tf.train.Saver(max_to_keep=10000)
