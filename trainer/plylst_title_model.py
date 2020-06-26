@@ -12,24 +12,40 @@ import util
 from models.TransformerEncoderAE import TransformerEncoderAE
 
 args = argparse.ArgumentParser()
-args.add_argument('--lr', type=float, default=0.001)
-args.add_argument('--bs', type=int, default=256)
+args.add_argument('--bs', type=int, default=128)
 args.add_argument('--gpu', type=int, default=6)
+args.add_argument('--tags_loss_weight', type=float, default=0.5)
+args.add_argument('--negative_loss_weight', type=float, default=1.0)
+args.add_argument('--warmup_steps', type=float, default=4000)
 config = args.parse_args()
-lr = config.lr
 bs = config.bs
 gpu = config.gpu
+tags_loss_weight = config.tags_loss_weight
+negative_loss_weight = config.negative_loss_weight
+warmup_steps = config.warmup_steps
 
 
-def train(model, train_util, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5, negative_loss_weight=0.5):
+def get_lr(step_num):
+    '''
+    https://ufal.mff.cuni.cz/pbml/110/art-popel-bojar.pdf
+    step_num(training_steps):  number of iterations, ie. the number of times the optimizer update was run
+        This number also equals the number of mini batches that were processed.
+    '''
+    lr = (parameters.embed_size ** -0.5) * min((step_num ** -0.5), (step_num * (warmup_steps ** -1.5)))
+    return lr
+
+
+def train(model, train_util, iter, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5, negative_loss_weight=0.5):
     model_train_dataset = train_util.make_dataset(shuffle=True)
-
     loss = 0
 
     data_num = len(model_train_dataset['model_input'])
     epoch = int(np.ceil(data_num / batch_size))
 
     for i in tqdm(range(epoch)):
+        step_num = ((iter - 1) * epoch) + (i + 1)
+        lr = get_lr(step_num=step_num)
+
         batch_input_sequence_indices = model_train_dataset['model_input'][batch_size * i: batch_size * (i + 1)]
         batch_sparse_label = util.label_to_sparse_label(
             model_train_dataset['label'][batch_size * i: batch_size * (i + 1)])
@@ -44,7 +60,10 @@ def train(model, train_util, lr, batch_size=64, keep_prob=0.9, tags_loss_weight=
                              model.negative_loss_weight: negative_loss_weight
                              })
         loss += _loss
-    return loss / data_num
+
+    return loss / epoch
+
+
 
 def validation_ndcg(model, val_util, label_info, batch_size=64):
     dataset = val_util.ndcg_check_dataset
@@ -52,6 +71,7 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
     epoch = int(np.ceil(data_num / batch_size))
 
     reco_result = []
+    # candidate = []
     for i in tqdm(range(epoch)):
         batch_input_sequence_indices = dataset['model_input'][batch_size * i: batch_size * (i + 1)]
         batch_id_list = dataset['id_list'][batch_size * i: batch_size * (i + 1)]
@@ -60,23 +80,29 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
             [model.reco_songs, model.reco_tags],
             {model.input_sequence_indices: batch_input_sequence_indices,
              model.keep_prob: 1.0,
-             model.song_top_k: 1000,
-             model.tag_top_k: 100})
+             model.song_top_k: 10000,  # 20300,
+             model.tag_top_k: 30})  # 1050})
 
         for _reco_songs, _reco_tags, _id in zip(reco_songs, reco_tags, batch_id_list):
+            _reco_songs = label_info.label_encoder.inverse_transform(_reco_songs)
+            _reco_tags = label_info.label_encoder.inverse_transform(_reco_tags)
+
             filtered_songs = []
             for song in _reco_songs:
                 if len(filtered_songs) == 100:
                     break
-                if song in val_util.id_seen_songs_dict[_id]:
+
+                if song in val_util.plylst_id_seen_songs_dict[_id]:
                     continue
-                if val_util.song_issue_dict[song] > val_util.id_plylst_updt_date_dict[_id]:
+                if song_issue_dict[song] > val_util.plylst_id_plylst_updt_date_dict[_id]:
                     continue
                 filtered_songs.append(song)
-            filtered_songs = label_info.label_encoder.inverse_transform(filtered_songs[:100])
-            filtered_tags = label_info.label_encoder.inverse_transform(
-                list(filter(lambda tag: tag not in val_util.id_seen_tags_dict[_id], _reco_tags))[:10])
-            reco_result.append({'songs': filtered_songs, 'tags': filtered_tags})
+
+            if len(filtered_songs) < 100:
+                print(len(filtered_songs))
+
+            filtered_tags = list(filter(lambda tag: tag not in val_util.plylst_id_seen_tags_dict[_id], _reco_tags))[:10]
+            reco_result.append({'songs': filtered_songs, 'tags': filtered_tags, 'id': _id})
 
     return val_util._eval(reco_result)
 
@@ -103,13 +129,10 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5, negati
                           })
         loss += _loss
 
-    return loss / data_num
+    return loss / epoch
 
 
-
-
-
-def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_size=512, keep_prob=0.9,
+def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=512, keep_prob=0.9,
         tags_loss_weight=0.5, negative_loss_weight=0.5, restore=0):
     if not os.path.exists(saver_path):
         print("create save directory")
@@ -120,7 +143,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
         os.makedirs(os.path.join(saver_path, 'tensorboard'))
 
     if restore != 0:
-        model.saver.restore(sess, saver_path + str(restore) + ".ckpt")
+        model.saver.restore(sess, os.path.join(saver_path, str(restore) + ".ckpt"))
         print('restore:', restore)
     else:
         with tf.name_scope("tensorboard"):
@@ -130,6 +153,13 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
             valid_song_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_song_ndcg')  # no regularization
             valid_tag_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_tag_ndcg')  # no regularization
             valid_score_tensorboard = tf.placeholder(tf.float32, name='valid_score')  # no regularization
+
+            pre_train_loss_tensorboard = tf.placeholder(tf.float32,
+                                                    name='pre_train_loss')  # with regularization (minimize 할 값)
+            pre_valid_loss_tensorboard = tf.placeholder(tf.float32, name='pre_valid_loss')  # no regularization
+
+            pre_train_loss_summary = tf.summary.scalar("pre_train_loss", pre_train_loss_tensorboard)
+            pre_valid_loss_summary = tf.summary.scalar("pre_valid_loss", pre_valid_loss_tensorboard)
 
             train_loss_summary = tf.summary.scalar("train_loss", train_loss_tensorboard)
             valid_loss_summary = tf.summary.scalar("valid_loss", valid_loss_tensorboard)
@@ -141,12 +171,16 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
             merged_train = tf.summary.merge([train_loss_summary])
             merged_valid = tf.summary.merge(
                 [valid_loss_summary, valid_song_ndcg_summary, valid_tag_ndcg_summary, valid_score_summary])
+
+            merged_pre_train = tf.summary.merge([pre_train_loss_summary])
+            merged_pre_valid = tf.summary.merge([pre_valid_loss_summary])
+
             writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
 
-
+    epoch_val_score_dict = {}
     for epoch in range(restore + 1, 151):
-        train_loss = train(model, train_util, lr, batch_size=batch_size, keep_prob=keep_prob,
-                           tags_loss_weight=tags_loss_weight, negative_loss_weight=negative_loss_weight)
+        train_loss = train(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob,
+                       tags_loss_weight=tags_loss_weight, negative_loss_weight=negative_loss_weight)
         print("epoch: %d, train_loss: %f" % (epoch, train_loss))
         print()
 
@@ -159,8 +193,8 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
             # tensorboard
             valid_loss = validation_loss(model, val_util, batch_size=batch_size, tags_loss_weight=tags_loss_weight,
                                          negative_loss_weight=negative_loss_weight)
-            # valid_loss =0.0
             music_ndcg, tag_ndcg, score = validation_ndcg(model, val_util, label_info, batch_size=batch_size)
+            epoch_val_score_dict[epoch] = score
 
             print("epoch: %d, valid_loss: %f, musin_ndcg: %f, tag_ndcg: %f, score: %f" % (
                 epoch, valid_loss, music_ndcg, tag_ndcg, score))
@@ -174,6 +208,10 @@ def run(model, sess, train_util, val_util, label_info, saver_path, lr, batch_siz
             print()
 
             model.saver.save(sess, os.path.join(saver_path, str(epoch) + ".ckpt"))
+
+    epoch_val_score_list = sorted(list(epoch_val_score_dict.items()), key=lambda x:x[1], reverse=True)[:3]
+    epoch_val_score_list.append(saver_path)
+    util.dump(epoch_val_score_list, os.path.join(parameters.base_dir, 'plylst_title_epoch_val_score_list.pickle'))
 
 
 def make_transformer_embedding(songs_embedding, tags_embedding, label_info):
@@ -192,27 +230,30 @@ def make_transformer_embedding(songs_embedding, tags_embedding, label_info):
 
 # make train / val set
 train_set = util.load_json('dataset/orig/train.json')
+val_question = util.load_json('dataset/questions/val.json')
+val_answers = util.load_json('dataset/answers/val.json')
+song_meta = util.load_json('dataset/song_meta.json')
+
+
 label_info = util.load(os.path.join(parameters.base_dir, parameters.label_info))
+song_issue_dict = util.load(os.path.join(parameters.base_dir, parameters.song_issue_dict))
+
 sp = spm.SentencePieceProcessor(model_file=os.path.join(parameters.base_dir, parameters.bpe_model_file))
 
 train_util = plylst_title_util.TrainPlylstTitleUtil(train_set, parameters.title_max_sequence_length, label_info, sp)
-val_util = util.load(os.path.join(parameters.base_dir, parameters.plylst_title_transformer_val_sampled_data))
-
-songs_tags_wmf = util.load(os.path.join(parameters.base_dir, parameters.songs_tags_wmf))
-init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
-
+val_util = plylst_title_util.ValPlylstTitleUtil(val_question, val_answers, song_meta,
+                                                parameters.title_max_sequence_length, label_info, sp)
+del train_set, val_question, val_answers, song_meta
 
 # model
 model = TransformerEncoderAE(
     voca_size=len(sp),
-    songs_tags_size=len(label_info.label_encoder.classes_),
     embedding_size=parameters.embed_size,
     is_embedding_scale=True,
     max_sequence_length=parameters.title_max_sequence_length,
     encoder_decoder_stack=parameters.stack,
     multihead_num=parameters.multihead,
     pad_idx=sp.piece_to_id(label_info.pad_token),
-    unk_idx=label_info.label_encoder.transform([label_info.unk_token])[0],
     songs_num=len(label_info.songs),
     tags_num=len(label_info.tags))
 
@@ -223,10 +264,15 @@ config.gpu_options.allow_growth = True  # 필요한 만큼만 gpu 메모리 사�
 
 sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
-sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
 
-tags_loss_weight = 0.55
-negative_loss_weight = 0.55
+# init
+songs_tags_embedding_table = util.load(os.path.join(parameters.base_dir, 'songs_tags_embedding_table.pickle'))
+sess.run(model.songs_tags_embedding_table.assign(songs_tags_embedding_table))  # wmf로 pretraining된 임베딩 사용
+
+# songs_tags_wmf = util.load(os.path.join(parameters.base_dir, parameters.songs_tags_wmf))
+# init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
+# sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
+
 # # 학습 진행
 run(
     model,
@@ -234,9 +280,9 @@ run(
     train_util,
     val_util,
     label_info,
-    saver_path='./saver_title_emb%d_stack%d_head%d_lr_%0.5f_tags_loss_weight_%0.2f_negative_loss_weight_%0.2f' % (
-        parameters.embed_size, parameters.stack, parameters.multihead, lr, tags_loss_weight, negative_loss_weight),
-    lr=lr,
+    saver_path='./TITLE_emb%d_stack%d_head%d_tags_loss_weight%0.2f_negative_loss_weight%0.2f_bs_%d_warmup_%d' % (
+        parameters.embed_size, parameters.stack, parameters.multihead, tags_loss_weight,
+        negative_loss_weight, bs, warmup_steps),
     batch_size=bs,
     keep_prob=0.9,
     tags_loss_weight=tags_loss_weight,
