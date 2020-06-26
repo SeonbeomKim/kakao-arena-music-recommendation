@@ -170,7 +170,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
             writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
 
     epoch_val_score_dict = {}
-    for epoch in range(restore + 1, 2):
+    for epoch in range(restore + 1, 151):
         train_loss = train(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob,
                        tags_loss_weight=tags_loss_weight, negative_loss_weight=negative_loss_weight)
         print("epoch: %d, train_loss: %f" % (epoch, train_loss))
