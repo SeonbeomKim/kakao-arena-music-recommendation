@@ -2,7 +2,7 @@ import tensorflow as tf  # version 1.4
 
 
 class OrderlessBertAE:
-    def __init__(self, voca_size, embedding_size, is_embedding_scale, max_sequence_length,
+    def __init__(self, voca_size, embedding_size, is_embedding_scale,
                  encoder_decoder_stack, multihead_num, pad_idx, songs_num, tags_num, artists_num):
 
         tf.set_random_seed(888)  # 787
@@ -10,7 +10,6 @@ class OrderlessBertAE:
         self.voca_size = voca_size
         self.embedding_size = embedding_size
         self.is_embedding_scale = is_embedding_scale  # True or False
-        self.max_sequence_length = max_sequence_length
         self.encoder_decoder_stack = encoder_decoder_stack
         self.multihead_num = multihead_num
         self.pad_idx = pad_idx  # <'pad'> symbol index
