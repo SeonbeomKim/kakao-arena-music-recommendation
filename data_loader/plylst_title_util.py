@@ -207,7 +207,7 @@ class ValUtil:
         return dataset
 
 
-    def make_ndcg_check_dataset(self, question, answer):
+    def make_ndcg_check_dataset(self, question):
         result = {'model_input': [], 'id_list': [], 'seen_songs_set': [], 'seen_tags_set': [],
                   'plylst_updt_date': [], 'gt': []}
 
