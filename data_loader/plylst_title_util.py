@@ -80,7 +80,7 @@ def make_mask_dataset(converted_model_input, sentencepiece):
 
 
 
-class TrainPlylstTitleUtil:
+class TrainUtil:
     def __init__(self, dataset, model_input_size, label_info, sentencepiece):
         self.dataset = dataset
         self.model_input_size = model_input_size
@@ -146,7 +146,7 @@ class TrainPlylstTitleUtil:
 
         return result
 
-class ValPlylstTitleUtil:
+class ValUtil:
     def __init__(self, question, answer, model_input_size, label_info, sentencepiece):
         self.model_input_size = model_input_size
 
@@ -208,7 +208,7 @@ class ValPlylstTitleUtil:
 
 
     def make_ndcg_check_dataset(self, question, answer):
-        result = {'model_input': [], 'id_list': [], 'input_size': [], 'seen_songs_set': [], 'seen_tags_set': [],
+        result = {'model_input': [], 'id_list': [], 'seen_songs_set': [], 'seen_tags_set': [],
                   'plylst_updt_date': [], 'gt': []}
 
         pad_idx = self.sentencepiece.piece_to_id(self.label_info.pad_token)
@@ -232,7 +232,6 @@ class ValPlylstTitleUtil:
 
             result['gt'].append(gt)
             result['model_input'].append(pad_model_input)
-            result['input_size'].append(len(model_input))
             result['id_list'].append(each["id"])
             result['seen_songs_set'].append(set(songs))
             result['seen_tags_set'].append(set(tags))
