@@ -206,21 +206,24 @@ class OrderlessBertAE:
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='V'
+                name='V',
+                kernel_initializer = tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, key_value_sequence_length, self.embedding_size]
             K = tf.layers.dense(
                 key_value,
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='K'
+                name='K',
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, key_value_sequence_length, self.embedding_size]
             Q = tf.layers.dense(
                 query,
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='Q'
+                name='Q',
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, query_sequence_length, self.embedding_size]
 
             # linear 결과를 self.multihead_num등분하고 연산에 지장을 주지 않도록 batch화 시킴.
@@ -278,7 +281,8 @@ class OrderlessBertAE:
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='linear'
+                name='linear',
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, query_sequence_length, self.embedding_size]
 
             if output_mask is not None:
@@ -298,12 +302,14 @@ class OrderlessBertAE:
             inner_layer = tf.layers.dense(
                 embedding,
                 units=4 * self.embedding_size,  # bert paper
-                activation=activation  # relu
+                activation=activation,  # relu
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, self.decoder_input_length, 4*self.embedding_size]
             dense = tf.layers.dense(
                 inner_layer,
                 units=units,
-                activation=None
+                activation=None,
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, self.decoder_input_length, self.embedding_size]
 
             if output_mask is not None:

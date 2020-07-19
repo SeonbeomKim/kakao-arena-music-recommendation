@@ -245,28 +245,35 @@ class TitleBert:
                                       name=None):
         # Sharing Variables
         with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
-            V = tf.layers.dense(
+            # for문으로 self.multihead_num번 돌릴 필요 없이 embedding_size 만큼 만들고 self.multihead_num등분해서 연산하면 됨.
+            V = tf.layers.dense(  # layers dense는 배치(N)별로 동일하게 연산됨.
                 key_value,
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='V'
+                name='V',
+                kernel_initializer = tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, key_value_sequence_length, self.embedding_size]
             K = tf.layers.dense(
                 key_value,
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='K'
+                name='K',
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, key_value_sequence_length, self.embedding_size]
             Q = tf.layers.dense(
                 query,
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='Q'
+                name='Q',
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, query_sequence_length, self.embedding_size]
 
+            # linear 결과를 self.multihead_num등분하고 연산에 지장을 주지 않도록 batch화 시킴.
+            # https://github.com/Kyubyong/transformer 참고.
+            # split: [N, key_value_sequence_length, self.embedding_size/self.multihead_num]이 self.multihead_num개 존재
             V = tf.concat(tf.split(V, self.multihead_num, axis=-1),
                           axis=0)  # [self.multihead_num*N, key_value_sequence_length, self.embedding_size/self.multihead_num]
             K = tf.concat(tf.split(K, self.multihead_num, axis=-1),
@@ -282,18 +289,34 @@ class TitleBert:
                 score *= score_mask  # zero mask
                 score += ((score_mask - 1) * 1e+9)  # -inf mask
             # decoder self_attention:
+            # 1 0 0
+            # 1 1 0
+            # 1 1 1 형태로 마스킹
 
+            # encoder_self_attention
+            # if encoder_input_data: i like </pad>
+            # 1 1 0
+            # 1 1 0
+            # 0 0 0 형태로 마스킹
+
+            # ED_attention
+            # if encoder_input_data: i like </pad>
+            # 1 1 0
+            # 1 1 0
+            # 1 1 0 형태로 마스킹
 
             softmax = tf.nn.softmax(score,
                                     dim=2)  # [self.multihead_num*N, query_sequence_length, key_value_sequence_length]
 
             # Attention dropout
+            # https://arxiv.org/abs/1706.03762v4 => v4 paper에는 attention dropout 하라고 되어 있음.
             softmax = tf.nn.dropout(softmax, keep_prob=self.keep_prob)
 
             # Attention weighted sum
             attention = tf.matmul(softmax,
                                   V)  # [self.multihead_num*N, query_sequence_length, self.embedding_size/self.multihead_num]
 
+            # split: [N, query_sequence_length, self.embedding_size/self.multihead_num]이 self.multihead_num개 존재
             concat = tf.concat(tf.split(attention, self.multihead_num, axis=0),
                                axis=-1)  # [N, query_sequence_length, self.embedding_size]
 
@@ -303,7 +326,8 @@ class TitleBert:
                 units=self.embedding_size,
                 activation=activation,
                 use_bias=False,
-                name='linear'
+                name='linear',
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, query_sequence_length, self.embedding_size]
 
             if output_mask is not None:
@@ -323,12 +347,14 @@ class TitleBert:
             inner_layer = tf.layers.dense(
                 embedding,
                 units=4 * self.embedding_size,  # bert paper
-                activation=activation  # relu
+                activation=activation,  # relu
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, self.decoder_input_length, 4*self.embedding_size]
             dense = tf.layers.dense(
                 inner_layer,
                 units=units,
-                activation=None
+                activation=None,
+                kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
             )  # [N, self.decoder_input_length, self.embedding_size]
 
             if output_mask is not None:
@@ -336,8 +362,8 @@ class TitleBert:
 
             # Drop out
             dense = tf.nn.dropout(dense, keep_prob=self.keep_prob)
-
             # Add
             dense += embedding
+
 
         return dense
