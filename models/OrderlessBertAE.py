@@ -116,10 +116,10 @@ class OrderlessBertAE:
 
         with tf.name_scope('predictor'):
             self.reco_songs, self.reco_songs_score = self.top_k(
-                predict=song_predict,
+                predict=tf.nn.sigmoid(song_predict),
                 top_k=self.song_top_k)
             self.reco_tags, self.reco_tags_score = self.top_k(
-                predict=tag_predict,
+                predict=tf.nn.sigmoid(tag_predict),
                 top_k=self.tag_top_k)
             self.reco_tags += self.songs_num
 
