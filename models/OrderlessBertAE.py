@@ -24,7 +24,6 @@ class OrderlessBertAE:
             self.tag_top_k = tf.placeholder(tf.int32)
             self.tags_loss_weight = tf.placeholder(tf.float32)
             self.artists_loss_weight = tf.placeholder(tf.float32)
-            self.negative_loss_weight = tf.placeholder(tf.float32)
 
             self.input_sequence_indices = tf.placeholder(tf.int32, [None, None], name='input_sequence_indices')
 
@@ -99,7 +98,7 @@ class OrderlessBertAE:
             # top_k 중 틀린 정답 위치
             wrong_ranking_label = (1 - song_label) * wrong_top_k_song_predict_label
 
-            song_ranking_loss = -(correct_ranking_label * tf.log(sigmoid_song_predict + 1e-10) + self.negative_loss_weight * (
+            song_ranking_loss = -(correct_ranking_label * tf.log(sigmoid_song_predict + 1e-10) + (
                     wrong_ranking_label * tf.log(1 - sigmoid_song_predict + 1e-10)))
 
         with tf.name_scope('total_loss'):
