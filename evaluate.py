@@ -20,11 +20,17 @@ class ArenaEvaluator:
 
         return dcg / self._idcgs[len(gt)]
 
-    def _eval(self, gt_fname, rec_fname):
-        gt_playlists = load_json(gt_fname)
-        gt_dict = {g["id"]: g for g in gt_playlists}
-        rec_playlists = load_json(rec_fname)
+    def _eval(self, gt_fname=None, rec_fname=None, gt=None, rec=None):
+        if gt_fname and rec_fname:
+            gt_playlists = load_json(gt_fname)
+            rec_playlists = load_json(rec_fname)
+        elif gt and rec:
+            gt_playlists = gt
+            rec_playlists = rec
+        else:
+            raise Exception("데이터가 올바르지 않습니다.")
 
+        gt_dict = {g["id"]: g for g in gt_playlists}
         gt_ids = set([g["id"] for g in gt_playlists])
         rec_ids = set([r["id"] for r in rec_playlists])
 
@@ -65,10 +71,20 @@ class ArenaEvaluator:
 
     def evaluate(self, gt_fname, rec_fname):
         try:
-            music_ndcg, tag_ndcg, score = self._eval(gt_fname, rec_fname)
+            music_ndcg, tag_ndcg, score = self._eval(gt_fname=gt_fname, rec_fname=rec_fname)
             print("music nDCG: %0.6f" % music_ndcg)
             print("Tag nDCG: %0.6f" % tag_ndcg)
             print("Score: %0.6f" % score)
+        except Exception as e:
+            print(e)
+
+    def evaluate_from_data(self, gt, rec):
+        try:
+            music_ndcg, tag_ndcg, score = self._eval(gt=gt, rec=rec)
+            print("music nDCG: %0.6f" % music_ndcg)
+            print("Tag nDCG: %0.6f" % tag_ndcg)
+            print("Score: %0.6f" % score)
+            return music_ndcg, tag_ndcg, score
         except Exception as e:
             print(e)
 
