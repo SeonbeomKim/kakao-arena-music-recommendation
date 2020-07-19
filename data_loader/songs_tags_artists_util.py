@@ -28,7 +28,7 @@ def convert_model_input(songs, tags, artists, label_encoder=None):
     return result
 
 
-class TrainSongsTagsUtil:
+class TrainUtil:
     def __init__(self, dataset, model_input_size, label_info):
         self.dataset = dataset
 
@@ -86,7 +86,7 @@ class TrainSongsTagsUtil:
         return result
 
 
-class ValSongsTagsUtil:
+class ValUtil:
     def __init__(self, question, answer, model_input_size, label_info):
         self.model_input_size = model_input_size
 
