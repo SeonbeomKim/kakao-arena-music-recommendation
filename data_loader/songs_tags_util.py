@@ -1,42 +1,42 @@
 import random
 
 import numpy as np
+import parameters
 from tqdm import tqdm
 
-import parameters
 import util
-from evaluate import ArenaEvaluator
-from split_data import ArenaSplitter
 
 random.seed(888)
 np.random.seed(888)
 
+def get_artists(songs, song_artist_dict):
+    artists_set = set()
+    for song in songs:
+        artists_set.update(song_artist_dict.get(song, []))
+    return list(artists_set)
 
-def convert_model_input(songs, tags, label_encoder=None):
+def convert_model_input(songs, tags, artists, label_encoder=None):
     result = ['@song_cls', '@tag_cls']
     if songs:
         result += songs
     if tags:
         result += tags
-
+    if artists:
+        result += artists
     if label_encoder:
         return label_encoder.transform(result)
     return result
 
 
 class TrainSongsTagsUtil:
-    def __init__(self, dataset, song_meta, model_input_size, label_info):
+    def __init__(self, dataset, model_input_size, label_info):
         self.dataset = dataset
-        self.song_meta = song_meta
 
         self.model_input_size = model_input_size
         self.label_info = label_info
 
         self.all_songs_set = set(label_info.songs)
         self.all_tags_set = set(label_info.tags)
-
-        self.splitter = ArenaSplitter()
-
 
     def get_random_sampled_model_input(self, songs, tags):
         min_songs = 0
@@ -53,9 +53,8 @@ class TrainSongsTagsUtil:
 
         return songs, tags
 
-
     def make_dataset_v3(self, shuffle=True):
-        result = {"model_input": [], 'label': []}
+        result = {"model_input": [], 'label': [], 'input_size': []}
 
         if shuffle:
             random.shuffle(self.dataset)
@@ -63,58 +62,32 @@ class TrainSongsTagsUtil:
         for each in tqdm(self.dataset, total=len(self.dataset)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
+            artists = get_artists(songs, self.label_info.song_artist_dict)
 
-            label = songs + tags
+            label = songs + tags + artists
             if not label:
                 continue
 
-            songs, tags = self.get_random_sampled_model_input(songs, tags)
-            if not songs and not tags:
+            sampled_songs, sampled_tags = self.get_random_sampled_model_input(songs, tags)
+            if not sampled_songs and not sampled_tags:
                 continue
+            sampled_artists = get_artists(sampled_songs, self.label_info.song_artist_dict)
 
-            model_input = convert_model_input(songs, tags)
-
+            model_input = convert_model_input(sampled_songs, sampled_tags, sampled_artists)
             pad_model_input = self.label_info.label_encoder.transform(
                 model_input + [self.label_info.pad_token] * (self.model_input_size - len(model_input)))
             label = self.label_info.label_encoder.transform(label)
 
+            result['input_size'].append(len(model_input))
             result["model_input"].append(pad_model_input)
             result["label"].append(label)
 
+        result['model_input'] = np.array(result['model_input'], dtype=np.int32)
         return result
 
-    # TODO 데이터마다 song 1개 tag 0개, song 0개, tag 1개인 경우에 대해서 전부 학습에 사용하기
-    def make_dataset_v4(self, shuffle=True):
-        result = {"model_input": [], 'label': []}
 
-        if shuffle:
-            random.shuffle(self.dataset)
-
-        for each in tqdm(self.dataset, total=len(self.dataset)):
-            songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
-            tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-
-            label = songs + tags
-            if not label:
-                continue
-
-            songs, tags = self.get_random_sampled_model_input(songs, tags)
-            if not songs and not tags:
-                continue
-
-            model_input = convert_model_input(songs, tags)
-
-            pad_model_input = self.label_info.label_encoder.transform(
-                model_input + [self.label_info.pad_token] * (self.model_input_size - len(model_input)))
-            label = self.label_info.label_encoder.transform(label)
-
-            result["model_input"].append(pad_model_input)
-            result["label"].append(label)
-
-        return result
-
-class ValSongsTagsUtil(ArenaEvaluator):
-    def __init__(self, question, answer, song_meta, model_input_size, label_info):
+class ValSongsTagsUtil:
+    def __init__(self, question, answer, model_input_size, label_info):
         self.model_input_size = model_input_size
 
         self.label_info = label_info
@@ -122,111 +95,80 @@ class ValSongsTagsUtil(ArenaEvaluator):
         self.all_songs_set = set(label_info.songs)
         self.all_tags_set = set(label_info.tags)
 
+        self.answer_plylst_id_songs_tags_dict = self.get_plylst_id_songs_tags_dict(answer)
+
         # for loss check
-        self.plylst_id_label_dict = self.get_plylst_id_label_dict(question, answer)
         self.loss_check_dataset = self.make_loss_check_dataset(question)
 
         # for ndcg check
-        self.plylst_id_answer_dict = self.get_plylst_id_answer_dict(answer)
-        self.song_id_meta_dict = self.get_song_id_meta_dict(song_meta)
-        self.plylst_id_seen_songs_dict = {}
-        self.plylst_id_seen_tags_dict = {}
-        self.plylst_id_plylst_updt_date_dict = {}
-        self.ndcg_check_dataset, self.answer_label = self.make_ndcg_check_dataset(question)
-
-        super(ValSongsTagsUtil, self).__init__()
+        self.ndcg_check_dataset = self.make_ndcg_check_dataset(question)
 
 
-    def get_song_id_meta_dict(self, song_meta):
-        song_id_meta_dict = {}
-        for each in song_meta:
-            if each['id'] not in self.all_songs_set:
-                continue
-            song_id_meta_dict[each['id']] = {}
-            song_id_meta_dict[each['id']]['artist_id_basket'] = each['artist_id_basket']
-            song_id_meta_dict[each['id']]['song_gn_gnr_basket'] = each['song_gn_gnr_basket']
-
-        return song_id_meta_dict
-
-    def get_plylst_id_label_dict(self, question, answer):
+    def get_plylst_id_songs_tags_dict(self, data):
         plylst_id_label_dict = {}
-        for each in question:
-            songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
-            tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            plylst_id_label_dict[each["id"]] = songs + tags
-
-        for each in answer:
-            songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
-            tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            plylst_id_label_dict[each["id"]].extend(songs + tags)
+        for each in data:
+            plylst_id_label_dict[each["id"]] = {'songs': each['songs'], 'tags': each['tags']}
         return plylst_id_label_dict
 
-    def get_plylst_id_answer_dict(self, answer):
-        plylst_id_answer_dict = {}
-        for each in tqdm(answer, total=len(answer)):
-            plylst_id_answer_dict[each["id"]] = {'songs': each['songs'], 'tags': each['tags']}
-        return plylst_id_answer_dict
-
-
     def make_loss_check_dataset(self, question):
-        result = {"model_input": [], 'label': []}
+        result = {"model_input": [], 'label': [], 'input_size': []}
 
         for each in tqdm(question, total=len(question)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-
+            artists = get_artists(songs, self.label_info.song_artist_dict)
             if not songs and not tags:
                 continue
 
-            label = self.label_info.label_encoder.transform(self.plylst_id_label_dict[each["id"]])
+            answer_songs = list(filter(lambda song: song in self.all_songs_set,
+                                       self.answer_plylst_id_songs_tags_dict[each['id']]['songs']))
+            answer_tags = list(filter(lambda tag: tag in self.all_tags_set,
+                                      self.answer_plylst_id_songs_tags_dict[each['id']]['tags']))
+            answer_artists = get_artists(answer_songs, self.label_info.song_artist_dict)
 
-            model_input = convert_model_input(songs, tags)
+            label = songs + answer_songs + tags + answer_tags + artists + answer_artists
+            if not label:
+                continue
+            label = self.label_info.label_encoder.transform(label)
 
+            model_input = convert_model_input(songs, tags, artists)
             pad_model_input = self.label_info.label_encoder.transform(
                 model_input + [self.label_info.pad_token] * (self.model_input_size - len(model_input)))
 
+            result['input_size'].append(len(model_input))
             result["model_input"].append(pad_model_input)
             result["label"].append(label)
 
+        result['model_input'] = np.array(result['model_input'], dtype=np.int32)
         return result
 
-    def _eval(self, rec_list):
-        music_ndcg = 0.0
-        tag_ndcg = 0.0
-
-        for gt, rec in zip(self.answer_label, rec_list):
-            music_ndcg += self._ndcg(gt["songs"], rec["songs"][:100])
-            tag_ndcg += self._ndcg(gt["tags"], rec["tags"][:10])
-
-        music_ndcg = music_ndcg / len(rec_list)
-        tag_ndcg = tag_ndcg / len(rec_list)
-        score = music_ndcg * 0.85 + tag_ndcg * 0.15
-
-        return music_ndcg, tag_ndcg, score
 
     def make_ndcg_check_dataset(self, question):
-        result = {'model_input': [], 'id_list': []}
-        answer_label = []
+        result = {'model_input': [], 'id_list': [], 'input_size': [], 'seen_songs_set': [], 'seen_tags_set': [],
+                  'plylst_updt_date': [], 'gt': []}
 
         for each in tqdm(question, total=len(question)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
+            artists = get_artists(songs, self.label_info.song_artist_dict)
 
-            if not songs and not tags:
+            if not songs and not tags and not artists:
                 continue
 
-            plylst_id = each["id"]
-            self.plylst_id_seen_songs_dict[plylst_id] = set(songs)
-            self.plylst_id_seen_tags_dict[plylst_id] = set(tags)
-            self.plylst_id_plylst_updt_date_dict[plylst_id] = util.convert_updt_date(each["updt_date"])
-
-            answer_label.append(self.plylst_id_answer_dict[plylst_id])
-
-            model_input = convert_model_input(songs, tags)
-
+            model_input = convert_model_input(songs, tags, artists)
             pad_model_input = self.label_info.label_encoder.transform(
                 model_input + [self.label_info.pad_token] * (self.model_input_size - len(model_input)))
 
+            gt = self.answer_plylst_id_songs_tags_dict[each["id"]]
+            gt['id'] = each["id"]
+
+            result['gt'].append(gt)
             result['model_input'].append(pad_model_input)
-            result['id_list'].append(plylst_id)
-        return result, answer_label
+            result['input_size'].append(len(model_input))
+            result['id_list'].append(each["id"])
+            result['seen_songs_set'].append(set(songs))
+            result['seen_tags_set'].append(set(tags))
+            result['plylst_updt_date'].append(util.convert_updt_date(each["updt_date"]))
+
+        result['model_input'] = np.array(result['model_input'], dtype=np.int32)
+        return result
