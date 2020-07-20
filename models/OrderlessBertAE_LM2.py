@@ -138,14 +138,14 @@ class OrderlessBertAE:
             self.masked_position = tf.boolean_mask(self.encoder_embedding,
                                                    self.boolean_mask)  # [np.sum(boolean_mask), self.embedding_size]
             self.masked_LM_pred = tf.matmul(self.masked_position, tf.transpose(
-                self.songs_tags_artists_embedding_table))  # [np.sum(boolean_mask), self.voca_size]
+                song_embedding_table))  # [np.sum(boolean_mask), self.voca_size]
 
             self.label_smoothing = 0.1
             self.masked_LM_label_one_hot = tf.one_hot(
                 self.masked_LM_label,
-                depth=self.voca_size,
-                on_value=(1.0 - self.label_smoothing) + (self.label_smoothing / self.voca_size),  # tf.float32
-                off_value=(self.label_smoothing / self.voca_size),  # tf.float32
+                depth=self.songs_num,
+                on_value=(1.0 - self.label_smoothing) + (self.label_smoothing / self.songs_num),  # tf.float32
+                off_value=(self.label_smoothing / self.songs_num),  # tf.float32
                 dtype=tf.float32
             )  # [np.sum(boolean_mask), self.voca_size]
 
