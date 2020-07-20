@@ -44,11 +44,11 @@ class OrderlessBertAE:
             self.songs_tags_artists_embedding_table = tf.nn.dropout(self.songs_tags_artists_embedding_table,
                                                                     keep_prob=self.keep_prob)
 
-            # self.segment_embedding_table = tf.get_variable(
-            #     # https://github.com/tensorflow/models/blob/master/official/transformer/model/embedding_layer.py
-            #     'segment_embedding_table',
-            #     [3, self.embedding_size],
-            #     initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
+            self.segment_embedding_table = tf.get_variable(
+                # https://github.com/tensorflow/models/blob/master/official/transformer/model/embedding_layer.py
+                'segment_embedding_table',
+                [3, self.embedding_size],
+                initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
 
         with tf.name_scope('encoder'):
             encoder_input_embedding, encoder_input_mask = self.embedding_and_PE(self.input_sequence_indices)
@@ -189,12 +189,12 @@ class OrderlessBertAE:
             tf.cast(tf.not_equal(data, self.pad_idx), dtype=tf.float32),  # [N, data_length]
             axis=-1)  # [N, data_length, 1]
 
-        # # SE
-        # SE_seed = tf.cast(data < self.songs_num, dtype=tf.int32) + tf.cast(data < self.songs_num + self.tags_num,
-        #                                                               dtype=tf.int32)
-        # SE = tf.nn.embedding_lookup(
-        #     self.segment_embedding_table, SE_seed) # [N, data_length, self.embedding_size]
-        # embedding += SE
+        # SE
+        SE_seed = tf.cast(data < self.songs_num, dtype=tf.int32) + tf.cast(data < self.songs_num + self.tags_num,
+                                                                      dtype=tf.int32)
+        SE = tf.nn.embedding_lookup(
+            self.segment_embedding_table, SE_seed) # [N, data_length, self.embedding_size]
+        embedding += SE
 
         # pad masking
         embedding *= embedding_mask
