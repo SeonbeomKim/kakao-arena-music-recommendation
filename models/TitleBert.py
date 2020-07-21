@@ -7,7 +7,7 @@ import tensorflow as tf  # version 1.4
 
 class TitleBert:
     def __init__(self, voca_size, embedding_size, is_embedding_scale, max_sequence_length,
-                 encoder_decoder_stack, multihead_num, pad_idx, songs_num, tags_num):
+                 encoder_decoder_stack, multihead_num, pad_idx, songs_num, tags_num, artists_num):
         tf.set_random_seed(787)
 
         self.voca_size = voca_size
@@ -19,10 +19,12 @@ class TitleBert:
         self.pad_idx = pad_idx  # <'pad'> symbol index
         self.songs_num = songs_num  # song ?몃옒 媛쒖닔, song label? [0, songs_num) ?쇰줈 ?щ젮 ?덉뼱????
         self.tags_num = tags_num
+        self.artists_num = artists_num
 
         with tf.name_scope("placeholder"):
             self.lr = tf.placeholder(tf.float32)
             self.tags_loss_weight = tf.placeholder(tf.float32)
+            self.artists_loss_weight = tf.placeholder(tf.float32)
             self.song_top_k = tf.placeholder(tf.int32)
             self.tag_top_k = tf.placeholder(tf.int32)
 
@@ -42,12 +44,13 @@ class TitleBert:
                 [self.voca_size, self.embedding_size],
                 initializer=tf.random_normal_initializer(0., self.embedding_size ** -0.5))
 
-            songs_tags_embedding_table = tf.get_variable(
+            songs_tags_artists_embedding_table = tf.get_variable(
                 # https://github.com/google-research/bert/blob/master/run_squad.py
-                "songs_tags_embedding_table",
-                [self.songs_num + self.tags_num, self.embedding_size],
+                "songs_tags_artists_embedding_table",
+                [self.songs_num + self.tags_num + self.artists_num, self.embedding_size],
                 initializer=tf.truncated_normal_initializer(stddev=0.02))
-            self.songs_tags_embedding_table = tf.nn.dropout(songs_tags_embedding_table, keep_prob=self.keep_prob)
+            self.songs_tags_artists_embedding_table = tf.nn.dropout(songs_tags_artists_embedding_table,
+                                                                    keep_prob=self.keep_prob)
 
             # https://github.com/google-research/bert/blob/master/modeling.py
             self.position_embedding_table = tf.get_variable(  # [self.max_sequence_length, self.embedding_size]
@@ -60,31 +63,43 @@ class TitleBert:
             self.encoder_embedding = self.encoder(encoder_input_embedding, encoder_input_mask)
 
         with tf.name_scope('sequence_embedding'):
+            # get cls embedding
             self.song_cls_embedding = self.encoder_embedding[:, 0, :]  # [N, self.embedding_size]
             self.tag_cls_embedding = self.encoder_embedding[:, 1, :]  # [N, self.embedding_size]
+            self.artist_cls_embedding = self.encoder_embedding[:, 2, :]  # [N, self.embedding_size]
 
         with tf.name_scope('label'):
             label_sparse_tensor = tf.SparseTensor(indices=self.sparse_label,
                                                   values=tf.ones(tf.shape(self.sparse_label)[0]),
-                                                  dense_shape=[self.batch_size, self.songs_num + self.tags_num])
+                                                  dense_shape=[self.batch_size,
+                                                               self.songs_num + self.tags_num + self.artists_num])
             label = tf.sparse_tensor_to_dense(label_sparse_tensor, validate_indices=False)
 
             song_label = label[:, :self.songs_num]
-            tag_label = label[:, self.songs_num:]
+            tag_label = label[:, self.songs_num:self.songs_num + self.tags_num]
+            artist_label = label[:, self.songs_num + self.tags_num:self.songs_num + self.tags_num + self.artists_num]
 
         with tf.name_scope('trainer'):
-            song_embedding_table = self.songs_tags_embedding_table[:self.songs_num, :]
-            tag_embedding_table = self.songs_tags_embedding_table[self.songs_num:self.songs_num + self.tags_num, :]
+            song_embedding_table = self.songs_tags_artists_embedding_table[:self.songs_num, :]
+            tag_embedding_table = self.songs_tags_artists_embedding_table[
+                                  self.songs_num:self.songs_num + self.tags_num, :]
+            artist_embedding_table = self.songs_tags_artists_embedding_table[
+                                     self.songs_num + self.tags_num:self.songs_num + self.tags_num + self.artists_num,
+                                     :]
 
             self.songs_bias = tf.get_variable('songs_bias', [1, self.songs_num], initializer=tf.zeros_initializer())
             self.tags_bias = tf.get_variable('tags_bias', [1, self.tags_num], initializer=tf.zeros_initializer())
+            self.artists_bias = tf.get_variable('artists_bias', [1, self.artists_num],
+                                                initializer=tf.zeros_initializer())
 
             song_predict = tf.matmul(self.song_cls_embedding, song_embedding_table, transpose_b=True) + self.songs_bias
             tag_predict = tf.matmul(self.tag_cls_embedding, tag_embedding_table, transpose_b=True) + self.tags_bias
+            artist_predict = tf.matmul(self.artist_cls_embedding, artist_embedding_table,
+                                       transpose_b=True) + self.artists_bias
 
             song_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=song_label, logits=song_predict)
             tag_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tag_label, logits=tag_predict)
-
+            artist_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=artist_label, logits=artist_predict)
 
         with tf.name_scope('ranking_loss'):
             sigmoid_song_predict = tf.nn.sigmoid(song_predict)
@@ -105,17 +120,19 @@ class TitleBert:
             wrong_ranking_label = (1 - song_label) * wrong_top_k_song_predict_label
 
             song_ranking_loss = -(
-                        correct_ranking_label * tf.log(sigmoid_song_predict + 1e-10) + (
-                        wrong_ranking_label * tf.log(1 - sigmoid_song_predict + 1e-10)))
+                    correct_ranking_label * tf.log(sigmoid_song_predict + 1e-10) + (
+                    wrong_ranking_label * tf.log(1 - sigmoid_song_predict + 1e-10)))
 
         with tf.name_scope('total_loss'):
             self.loss = tf.reduce_mean(
                 tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(tag_loss, axis=-1))
+                tf.reduce_mean(tag_loss, axis=-1)) + self.artists_loss_weight * tf.reduce_mean(
+                tf.reduce_mean(artist_loss, axis=-1))
 
             self.loss_with_ranking_loss = tf.reduce_mean(
                 tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(tag_loss, axis=-1)) + 2 * tf.reduce_mean(
+                tf.reduce_mean(tag_loss, axis=-1)) + self.artists_loss_weight * tf.reduce_mean(
+                tf.reduce_mean(artist_loss, axis=-1)) + 2 * tf.reduce_mean(
                 tf.reduce_mean(song_ranking_loss, axis=-1))
 
         with tf.name_scope('predictor'):
