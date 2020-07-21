@@ -44,7 +44,7 @@ def train(model, train_util, iter, batch_size=64, keep_prob=0.9, tags_loss_weigh
         minimize_func = model.minimize_with_ranking_loss
 
     loss = 0
-    model_train_dataset = train_util.make_dataset_v3(shuffle=True)
+    model_train_dataset = train_util.make_dataset(shuffle=True)
     data_num = len(model_train_dataset['model_input'])
     epoch = int(np.ceil(data_num / batch_size))
 
