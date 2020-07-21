@@ -2,35 +2,19 @@ import json
 import os
 import pickle
 import random
-from datetime import datetime
-import parameters
+
 import numpy as np
-# import pandas as pd
+import parameters
 import re
+from datetime import datetime
 
 
-# def get_song_issue_dict(train_set, song_meta, label_info):
-#     all_songs_set = set(label_info.songs)
-#
-#     song_issue_dict = {}
-#     for each in song_meta:
-#         song_issue_dict[each["id"]] = int(each['issue_date'])
-#
-#     strange_song_issue_dict = {}
-#     for each in train_set:
-#         plylst_updt_date = convert_updt_date(each["updt_date"])
-#         songs = list(filter(lambda song: song in all_songs_set, each['songs']))
-#         for song in songs:
-#             if song_issue_dict[song] <= plylst_updt_date and song_issue_dict[song] != 0:
-#                 continue
-#
-#             if song not in strange_song_issue_dict:
-#                 strange_song_issue_dict[song] = []
-#             strange_song_issue_dict[song].append(plylst_updt_date)
-#
-#     for song in strange_song_issue_dict:
-#         song_issue_dict[song] = min(strange_song_issue_dict[song])
-#     return song_issue_dict
+def get_artists(songs, song_artist_dict):
+    artists_set = set()
+    for song in songs:
+        artists_set.update(song_artist_dict.get(song, []))
+    return list(artists_set)
+
 
 def get_song_issue_dict(train_set, song_meta, label_info):
     all_songs_set = set(label_info.songs)
@@ -55,12 +39,15 @@ def get_song_issue_dict(train_set, song_meta, label_info):
         song_issue_dict[song] = min(strange_song_issue_dict[song])
     return song_issue_dict
 
+
 def remove_special_char(string):
-    return re.sub("[^가-힣a-zA-Z0-9& ]+", ' ', string).strip().lower() # R&B
+    return re.sub("[^가-힣a-zA-Z0-9& ]+", ' ', string).strip().lower()  # R&B
+
 
 def convert_updt_date(updt_date):
     dtime = datetime.strptime(updt_date, '%Y-%m-%d %H:%M:%S.%f')
     return int(dtime.strftime("%Y%m%d"))
+
 
 def get_year_label(updt_date):
     # base_year 미만은 0, base_year는 1, 나머지는 1씩 증가
@@ -71,11 +58,13 @@ def get_year_label(updt_date):
     else:
         return '@%d' % year
 
+
 def select_bucket(data_size, bucket_size):
     for bucket in bucket_size:
         if data_size <= bucket:
             return bucket
     return None
+
 
 def label_to_sparse_label(label):
     sparse_label = []
@@ -83,6 +72,7 @@ def label_to_sparse_label(label):
         for _label in label[row]:
             sparse_label.append([row, _label])
     return sparse_label
+
 
 def get_k_negative_label(positive_label_set, total_label, k):
     negative_label = []
