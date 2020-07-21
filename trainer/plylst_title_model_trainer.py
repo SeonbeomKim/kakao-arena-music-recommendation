@@ -1,27 +1,26 @@
-import argparse
 import os
 
+import argparse
 import numpy as np
+import parameters
 import sentencepiece as spm
 import tensorflow as tf
+from data_loader.plylst_title_util import TrainUtil, ValUtil
+from evaluate import ArenaEvaluator
+from models.TitleBert import TitleBert
 from tqdm import tqdm
 
-import data_loader.plylst_title_util as plylst_title_util
-import parameters
 import util
-from models.TransformerEncoderAE import TransformerEncoderAE
 
 args = argparse.ArgumentParser()
 args.add_argument('--bs', type=int, default=128)
 args.add_argument('--gpu', type=int, default=6)
-args.add_argument('--tags_loss_weight', type=float, default=0.5)
-args.add_argument('--negative_loss_weight', type=float, default=1.0)
+args.add_argument('--tags_loss_weight', type=float, default=0.15)
 args.add_argument('--warmup_steps', type=float, default=4000)
 config = args.parse_args()
 bs = config.bs
 gpu = config.gpu
 tags_loss_weight = config.tags_loss_weight
-negative_loss_weight = config.negative_loss_weight
 warmup_steps = config.warmup_steps
 
 
@@ -31,11 +30,16 @@ def get_lr(step_num):
     step_num(training_steps):  number of iterations, ie. the number of times the optimizer update was run
         This number also equals the number of mini batches that were processed.
     '''
-    lr = (parameters.embed_size ** -0.5) * min((step_num ** -0.5), (step_num * (warmup_steps ** -1.5)))
+    lr = (parameters.title_model_embed_size ** -0.5) * min((step_num ** -0.5), (step_num * (warmup_steps ** -1.5)))
     return lr
 
 
-def train(model, train_util, iter, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5, negative_loss_weight=0.5):
+def train(model, train_util, iter, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5):
+    if iter < 50:
+        minimize_func = model.minimize
+    else:
+        minimize_func = model.minimize_with_ranking_loss
+
     model_train_dataset = train_util.make_dataset(shuffle=True)
     loss = 0
 
@@ -50,19 +54,72 @@ def train(model, train_util, iter, batch_size=64, keep_prob=0.9, tags_loss_weigh
         batch_sparse_label = util.label_to_sparse_label(
             model_train_dataset['label'][batch_size * i: batch_size * (i + 1)])
 
-        _, _loss = sess.run([model.minimize, model.loss],
+        _, _loss = sess.run([minimize_func, model.loss],
                             {model.input_sequence_indices: batch_input_sequence_indices,
                              model.sparse_label: batch_sparse_label,
                              model.batch_size: min(len(batch_input_sequence_indices), batch_size),
                              model.keep_prob: keep_prob,
                              model.lr: lr,
-                             model.tags_loss_weight: tags_loss_weight,
-                             model.negative_loss_weight: negative_loss_weight
-                             })
+                             model.tags_loss_weight: tags_loss_weight})
         loss += _loss
 
     return loss / epoch
 
+
+def pre_train_masked_LM(model, train_util, iter, batch_size=64, keep_prob=0.9):
+    pre_train_dataset = train_util.make_pre_train_dataset(shuffle=True)
+    loss = 0
+
+    data_num = len(pre_train_dataset['model_input'])
+    epoch = int(np.ceil(data_num / batch_size))
+
+    for i in tqdm(range(epoch)):
+        step_num = ((iter - 1) * epoch) + (i + 1)
+        lr = get_lr(step_num=step_num)
+
+        batch_input_sequence_indices = pre_train_dataset['model_input'][batch_size * i: batch_size * (i + 1)]
+        batch_mask_label = []
+        for each in pre_train_dataset['mask_label'][batch_size * i: batch_size * (i + 1)]:
+            batch_mask_label += each
+        batch_boolean_mask = pre_train_dataset['boolean_mask'][batch_size * i: batch_size * (i + 1)]
+
+        _, _loss = sess.run([model.minimize_masked_LM_loss, model.masked_LM_loss],
+                            {model.input_sequence_indices: batch_input_sequence_indices,
+                             model.boolean_mask: batch_boolean_mask,
+                             model.masked_LM_label: batch_mask_label,
+                             model.keep_prob: keep_prob,
+                             model.lr: lr})
+        loss += _loss
+
+    return loss / epoch
+
+
+def validation_pre_train_masked_LM(model, val_util, batch_size=64):
+    loss = 0
+    accuracy = 0
+    total_masked_LM_data = 0
+
+    dataset = val_util.pre_train_accuracy_check_dataset
+    data_num = len(dataset['model_input'])
+    epoch = int(np.ceil(data_num / batch_size))
+
+    for i in tqdm(range(epoch)):
+        batch_input_sequence_indices = dataset['model_input'][batch_size * i: batch_size * (i + 1)]
+        batch_mask_label = []
+        for each in dataset['mask_label'][batch_size * i: batch_size * (i + 1)]:
+            batch_mask_label += each
+        batch_boolean_mask = dataset['boolean_mask'][batch_size * i: batch_size * (i + 1)]
+
+        total_masked_LM_data += len(batch_mask_label)
+        _loss, _accuracy = sess.run([model.masked_LM_loss, model.masked_LM_correct],
+                                    {model.input_sequence_indices: batch_input_sequence_indices,
+                                     model.boolean_mask: batch_boolean_mask,
+                                     model.masked_LM_label: batch_mask_label,
+                                     model.keep_prob: 1.0
+                                     })
+        loss += _loss
+        accuracy += _accuracy
+    return loss / epoch, accuracy / total_masked_LM_data
 
 
 def validation_ndcg(model, val_util, label_info, batch_size=64):
@@ -71,10 +128,12 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
     epoch = int(np.ceil(data_num / batch_size))
 
     reco_result = []
-    # candidate = []
     for i in tqdm(range(epoch)):
         batch_input_sequence_indices = dataset['model_input'][batch_size * i: batch_size * (i + 1)]
         batch_id_list = dataset['id_list'][batch_size * i: batch_size * (i + 1)]
+        batch_seen_songs_set = dataset['seen_songs_set'][batch_size * i: batch_size * (i + 1)]
+        batch_seen_tags_set = dataset['seen_tags_set'][batch_size * i: batch_size * (i + 1)]
+        batch_plylst_updt_date = dataset['plylst_updt_date'][batch_size * i: batch_size * (i + 1)]
 
         reco_songs, reco_tags = sess.run(
             [model.reco_songs, model.reco_tags],
@@ -83,31 +142,32 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
              model.song_top_k: 10000,  # 20300,
              model.tag_top_k: 30})  # 1050})
 
-        for _reco_songs, _reco_tags, _id in zip(reco_songs, reco_tags, batch_id_list):
-            _reco_songs = label_info.label_encoder.inverse_transform(_reco_songs)
-            _reco_tags = label_info.label_encoder.inverse_transform(_reco_tags)
+        for k in range(len(reco_songs)):
+            _reco_songs = label_info.label_encoder.inverse_transform(reco_songs[k])
+            _reco_tags = label_info.label_encoder.inverse_transform(reco_tags[k])
+            _id = batch_id_list[k]
 
             filtered_songs = []
             for song in _reco_songs:
                 if len(filtered_songs) == 100:
                     break
 
-                if song in val_util.plylst_id_seen_songs_dict[_id]:
+                if song in batch_seen_songs_set[k]:
                     continue
-                if song_issue_dict[song] > val_util.plylst_id_plylst_updt_date_dict[_id]:
+                if song_issue_dict[song] > batch_plylst_updt_date[k]:
                     continue
                 filtered_songs.append(song)
 
             if len(filtered_songs) < 100:
                 print(len(filtered_songs))
 
-            filtered_tags = list(filter(lambda tag: tag not in val_util.plylst_id_seen_tags_dict[_id], _reco_tags))[:10]
+            filtered_tags = list(filter(lambda tag: tag not in batch_seen_tags_set[k], _reco_tags))[:10]
             reco_result.append({'songs': filtered_songs, 'tags': filtered_tags, 'id': _id})
 
-    return val_util._eval(reco_result)
+    return evaluator.evaluate_from_data(dataset['gt'], reco_result)
 
 
-def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5, negative_loss_weight=0.5):
+def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5):
     loss = 0
 
     dataset = val_util.loss_check_dataset
@@ -124,16 +184,14 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5, negati
                           model.sparse_label: batch_sparse_label,
                           model.batch_size: min(len(batch_input_sequence_indices), batch_size),
                           model.keep_prob: 1.0,
-                          model.tags_loss_weight: tags_loss_weight,
-                          model.negative_loss_weight: negative_loss_weight
-                          })
+                          model.tags_loss_weight: tags_loss_weight})
         loss += _loss
 
     return loss / epoch
 
 
 def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=512, keep_prob=0.9,
-        tags_loss_weight=0.5, negative_loss_weight=0.5, restore=0):
+        tags_loss_weight=0.5, restore=0):
     if not os.path.exists(saver_path):
         print("create save directory")
         os.makedirs(saver_path)
@@ -148,14 +206,14 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
     else:
         with tf.name_scope("tensorboard"):
             train_loss_tensorboard = tf.placeholder(tf.float32,
-                                                    name='train_loss')  # with regularization (minimize 할 값)
+                                                    name='train_loss')  # with regularization (minimize ??媛?
             valid_loss_tensorboard = tf.placeholder(tf.float32, name='valid_loss')  # no regularization
             valid_song_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_song_ndcg')  # no regularization
             valid_tag_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_tag_ndcg')  # no regularization
             valid_score_tensorboard = tf.placeholder(tf.float32, name='valid_score')  # no regularization
 
             pre_train_loss_tensorboard = tf.placeholder(tf.float32,
-                                                    name='pre_train_loss')  # with regularization (minimize 할 값)
+                                                        name='pre_train_loss')  # with regularization (minimize ??媛?
             pre_valid_loss_tensorboard = tf.placeholder(tf.float32, name='pre_valid_loss')  # no regularization
 
             pre_train_loss_summary = tf.summary.scalar("pre_train_loss", pre_train_loss_tensorboard)
@@ -177,11 +235,19 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
 
             writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
 
+    for epoch in range(1, 51):
+        pre_train_loss = pre_train_masked_LM(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob)
+        print('pre_train_loss_masked_LM epoch: %d, pre_train_loss: %f' % (epoch, pre_train_loss))
+
+        valid_loss, accuracy = validation_pre_train_masked_LM(model, val_util, batch_size=batch_size)
+        print('pre_train_valid_loss: %f, pre_train_valid_accuracy: %f' % (valid_loss, accuracy))
+        print()
+
     epoch_val_score_dict = {}
-    for epoch in range(restore + 1, 151):
+    for epoch in range(restore + 1, 201):
         train_loss = train(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob,
-                       tags_loss_weight=tags_loss_weight, negative_loss_weight=negative_loss_weight)
-        print("epoch: %d, train_loss: %f" % (epoch, train_loss))
+                           tags_loss_weight=tags_loss_weight)
+        print("TITLE epoch: %d, train_loss: %f" % (epoch, train_loss))
         print()
 
         # tensorboard
@@ -189,13 +255,10 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
             train_loss_tensorboard: train_loss})
         writer.add_summary(summary, epoch)
 
-        if (epoch) % 10 == 0 or epoch == 1:
+        if (epoch) % 5 == 0 or epoch == 1:
             # tensorboard
-            valid_loss = validation_loss(model, val_util, batch_size=batch_size, tags_loss_weight=tags_loss_weight,
-                                         negative_loss_weight=negative_loss_weight)
+            valid_loss = validation_loss(model, val_util, batch_size=batch_size, tags_loss_weight=tags_loss_weight)
             music_ndcg, tag_ndcg, score = validation_ndcg(model, val_util, label_info, batch_size=batch_size)
-            epoch_val_score_dict[epoch] = score
-
             print("epoch: %d, valid_loss: %f, musin_ndcg: %f, tag_ndcg: %f, score: %f" % (
                 epoch, valid_loss, music_ndcg, tag_ndcg, score))
 
@@ -207,84 +270,65 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
             writer.add_summary(summary, epoch)
             print()
 
+        if (epoch) % 10 == 0:
+            epoch_val_score_dict[epoch] = score
             model.saver.save(sess, os.path.join(saver_path, str(epoch) + ".ckpt"))
 
-    epoch_val_score_list = sorted(list(epoch_val_score_dict.items()), key=lambda x:x[1], reverse=True)[:3]
-    epoch_val_score_list.append(saver_path)
-    util.dump(epoch_val_score_list, os.path.join(parameters.base_dir, 'plylst_title_epoch_val_score_list.pickle'))
-
-
-def make_transformer_embedding(songs_embedding, tags_embedding, label_info):
-    pad_token = label_info.pad_token
-    unk_token = label_info.unk_token
-    others_embedding_tokens = label_info.others_for_encoder + [unk_token]
-
-    embed_size = songs_embedding.shape[1]
-
-    others_embedding = np.random.randn(len(others_embedding_tokens), embed_size)
-    others_embedding[others_embedding_tokens.index(pad_token)] *= 0
-
-    transformer_embedding = np.concatenate((songs_embedding, tags_embedding, others_embedding)).astype(np.float32)
-    return transformer_embedding
-
+    result = []
+    best_epoch, best_score = sorted(list(epoch_val_score_dict.items()), key=lambda x: x[1], reverse=True)[0]
+    result.append(best_epoch)
+    result.append(best_score)
+    result.append(saver_path)
+    util.dump(result, os.path.join(parameters.base_dir, 'title_result_info.pickle'))
 
 # make train / val set
 train_set = util.load_json('dataset/orig/train.json')
 val_question = util.load_json('dataset/questions/val.json')
 val_answers = util.load_json('dataset/answers/val.json')
-song_meta = util.load_json('dataset/song_meta.json')
-
 
 label_info = util.load(os.path.join(parameters.base_dir, parameters.label_info))
 song_issue_dict = util.load(os.path.join(parameters.base_dir, parameters.song_issue_dict))
 
 sp = spm.SentencePieceProcessor(model_file=os.path.join(parameters.base_dir, parameters.bpe_model_file))
 
-train_util = plylst_title_util.TrainPlylstTitleUtil(train_set, parameters.title_max_sequence_length, label_info, sp)
-val_util = plylst_title_util.ValPlylstTitleUtil(val_question, val_answers, song_meta,
-                                                parameters.title_max_sequence_length, label_info, sp)
-del train_set, val_question, val_answers, song_meta
+train_util = TrainUtil(train_set, parameters.title_model_max_sequence_length, label_info, sp)
+val_util = ValUtil(val_question, val_answers, parameters.title_model_max_sequence_length, label_info, sp)
+del train_set, val_question, val_answers
+
+evaluator = ArenaEvaluator()
 
 # model
-model = TransformerEncoderAE(
+print('voca_size: %d' % len(sp))
+
+model = TitleBert(
     voca_size=len(sp),
-    embedding_size=parameters.embed_size,
+    embedding_size=parameters.title_model_embed_size,
     is_embedding_scale=True,
-    max_sequence_length=parameters.title_max_sequence_length,
-    encoder_decoder_stack=parameters.stack,
-    multihead_num=parameters.multihead,
+    max_sequence_length=parameters.title_model_max_sequence_length,
+    encoder_decoder_stack=parameters.title_model_stack,
+    multihead_num=parameters.title_model_multihead,
     pad_idx=sp.piece_to_id(label_info.pad_token),
     songs_num=len(label_info.songs),
     tags_num=len(label_info.tags))
 
-# gpu 할당 및 session 생성
-os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)  # nvidia-smi의 k번째 gpu만 사용
+# gpu ?좊떦 諛?session ?앹꽦
+os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
 config = tf.ConfigProto()
-config.gpu_options.allow_growth = True  # 필요한 만큼만 gpu 메모리 사용
+config.gpu_options.allow_growth = True
 
 sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
 
-# init
-songs_tags_embedding_table = util.load(os.path.join(parameters.base_dir, 'songs_tags_embedding_table.pickle'))
-sess.run(model.songs_tags_embedding_table.assign(songs_tags_embedding_table))  # wmf로 pretraining된 임베딩 사용
-
-# songs_tags_wmf = util.load(os.path.join(parameters.base_dir, parameters.songs_tags_wmf))
-# init_embedding = make_transformer_embedding(songs_tags_wmf.user_factors, songs_tags_wmf.item_factors, label_info)
-# sess.run(model.song_tag_embedding_table.assign(init_embedding))  # wmf로 pretraining된 임베딩 사용
-
-# # 학습 진행
 run(
     model,
     sess,
     train_util,
     val_util,
     label_info,
-    saver_path='./TITLE_emb%d_stack%d_head%d_tags_loss_weight%0.2f_negative_loss_weight%0.2f_bs_%d_warmup_%d' % (
-        parameters.embed_size, parameters.stack, parameters.multihead, tags_loss_weight,
-        negative_loss_weight, bs, warmup_steps),
+    saver_path='./TITLE_VOCA_%d_emb%d_stack%d_head%d_tags_loss_weight%0.2f_bs_%d_warmup_%d' % (
+        parameters.bpe_voca_size, parameters.title_model_embed_size, parameters.title_model_stack,
+        parameters.title_model_multihead, tags_loss_weight, bs, warmup_steps),
     batch_size=bs,
     keep_prob=0.9,
     tags_loss_weight=tags_loss_weight,
-    negative_loss_weight=negative_loss_weight,
     restore=0)

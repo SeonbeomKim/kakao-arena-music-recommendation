@@ -2,7 +2,7 @@
     * tensorflow-gpu (1.14.0)
     * sentencepiece (0.1.91)
     * fire (0.3.1)
-    * numpy (1.17.0)
+    * numpy (1.16.4)
     * tqdm (4.46.0)
     
 1. 데이터셋 다운로드

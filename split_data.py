@@ -9,10 +9,10 @@ from util import load_json, write_json
 
 
 class ArenaSplitter:
-    def _split_data(self, playlists):
+    def _split_data(self, playlists, ratio):
         tot = len(playlists)
-        train = playlists[:int(tot * 0.80)]
-        val = playlists[int(tot * 0.80):]
+        train = playlists[:int(tot * ratio)]
+        val = playlists[int(tot * ratio):]
 
         return train, val
 
@@ -71,7 +71,7 @@ class ArenaSplitter:
 
         return q, a
 
-    def run(self, fname):
+    def run(self, fname, ratio=0.8):
         random.seed(777)
 
         print("Reading data...\n")
@@ -81,7 +81,7 @@ class ArenaSplitter:
         # print(f"Total playlists: {len(playlists)}")
 
         print("Splitting data...")
-        train, val = self._split_data(playlists)
+        train, val = self._split_data(playlists, ratio)
 
         parent = os.path.dirname(fname)
 
