@@ -53,7 +53,7 @@ class TrainUtil:
 
         return songs, tags
 
-    def make_dataset_v3(self, shuffle=True):
+    def make_dataset(self, shuffle=True):
         result = {"model_input": [], 'label': [], 'input_size': []}
 
         if shuffle:
