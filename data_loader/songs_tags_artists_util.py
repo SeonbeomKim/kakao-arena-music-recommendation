@@ -9,14 +9,9 @@ import util
 random.seed(888)
 np.random.seed(888)
 
-def get_artists(songs, song_artist_dict):
-    artists_set = set()
-    for song in songs:
-        artists_set.update(song_artist_dict.get(song, []))
-    return list(artists_set)
 
 def convert_model_input(songs, tags, artists, label_encoder=None):
-    result = ['@song_cls', '@tag_cls']
+    result = [parameters.songs_cls_token, parameters.tags_cls_token, parameters.artists_cls_token]
     if songs:
         result += songs
     if tags:
@@ -62,7 +57,7 @@ class TrainUtil:
         for each in tqdm(self.dataset, total=len(self.dataset)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            artists = get_artists(songs, self.label_info.song_artist_dict)
+            artists = util.get_artists(songs, self.label_info.song_artist_dict)
 
             label = songs + tags + artists
             if not label:
@@ -71,16 +66,60 @@ class TrainUtil:
             sampled_songs, sampled_tags = self.get_random_sampled_model_input(songs, tags)
             if not sampled_songs and not sampled_tags:
                 continue
-            sampled_artists = get_artists(sampled_songs, self.label_info.song_artist_dict)
+            sampled_artists = util.get_artists(sampled_songs, self.label_info.song_artist_dict)
 
             model_input = convert_model_input(sampled_songs, sampled_tags, sampled_artists)
             pad_model_input = self.label_info.label_encoder.transform(
-                model_input + [self.label_info.pad_token] * (self.model_input_size - len(model_input)))
+                model_input + [parameters.pad_token] * (self.model_input_size - len(model_input)))
             label = self.label_info.label_encoder.transform(label)
 
             result['input_size'].append(len(model_input))
             result["model_input"].append(pad_model_input)
             result["label"].append(label)
+
+        result['model_input'] = np.array(result['model_input'], dtype=np.int32)
+        return result
+
+    def make_candidate_dataset(self, shuffle=True):
+        result = {"model_input": [], 'input_size': [], 'seen_songs_set': [], 'seen_tags_set': [],
+                  'plylst_updt_date': [], 'gt': [], 'id_list': []}
+
+        if shuffle:
+            random.shuffle(self.dataset)
+
+        for each in tqdm(self.dataset, total=len(self.dataset)):
+            songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
+            tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
+            artists = util.get_artists(songs, self.label_info.song_artist_dict)
+
+            label = songs + tags + artists
+            if not label:
+                continue
+
+            sampled_songs, sampled_tags = self.get_random_sampled_model_input(songs, tags)
+            if not sampled_songs and not sampled_tags:
+                continue
+            sampled_artists = util.get_artists(sampled_songs, self.label_info.song_artist_dict)
+
+            model_input = convert_model_input(sampled_songs, sampled_tags, sampled_artists)
+            pad_model_input = self.label_info.label_encoder.transform(
+                model_input + [parameters.pad_token] * (self.model_input_size - len(model_input)))
+
+            plylst_id = each["id"]
+
+            gt = {'songs': list(set(songs) - set(sampled_songs)), 'tags': list(set(tags) - set(sampled_tags)),
+                  'id': plylst_id}
+
+            if not gt['songs'] or not gt['tags']:
+                continue
+
+            result['gt'].append(gt)
+            result['input_size'].append(len(model_input))
+            result['id_list'].append(each["id"])
+            result["model_input"].append(pad_model_input)
+            result['seen_songs_set'].append(set(sampled_songs))
+            result['seen_tags_set'].append(set(sampled_tags))
+            result['plylst_updt_date'].append(util.convert_updt_date(each["updt_date"]))
 
         result['model_input'] = np.array(result['model_input'], dtype=np.int32)
         return result
@@ -103,7 +142,6 @@ class ValUtil:
         # for ndcg check
         self.ndcg_check_dataset = self.make_ndcg_check_dataset(question)
 
-
     def get_plylst_id_songs_tags_dict(self, data):
         plylst_id_label_dict = {}
         for each in data:
@@ -116,7 +154,7 @@ class ValUtil:
         for each in tqdm(question, total=len(question)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            artists = get_artists(songs, self.label_info.song_artist_dict)
+            artists = util.get_artists(songs, self.label_info.song_artist_dict)
             if not songs and not tags:
                 continue
 
@@ -124,7 +162,7 @@ class ValUtil:
                                        self.answer_plylst_id_songs_tags_dict[each['id']]['songs']))
             answer_tags = list(filter(lambda tag: tag in self.all_tags_set,
                                       self.answer_plylst_id_songs_tags_dict[each['id']]['tags']))
-            answer_artists = get_artists(answer_songs, self.label_info.song_artist_dict)
+            answer_artists = util.get_artists(answer_songs, self.label_info.song_artist_dict)
 
             label = songs + answer_songs + tags + answer_tags + artists + answer_artists
             if not label:
@@ -133,7 +171,7 @@ class ValUtil:
 
             model_input = convert_model_input(songs, tags, artists)
             pad_model_input = self.label_info.label_encoder.transform(
-                model_input + [self.label_info.pad_token] * (self.model_input_size - len(model_input)))
+                model_input + [parameters.pad_token] * (self.model_input_size - len(model_input)))
 
             result['input_size'].append(len(model_input))
             result["model_input"].append(pad_model_input)
@@ -142,7 +180,6 @@ class ValUtil:
         result['model_input'] = np.array(result['model_input'], dtype=np.int32)
         return result
 
-
     def make_ndcg_check_dataset(self, question):
         result = {'model_input': [], 'id_list': [], 'input_size': [], 'seen_songs_set': [], 'seen_tags_set': [],
                   'plylst_updt_date': [], 'gt': []}
@@ -150,14 +187,14 @@ class ValUtil:
         for each in tqdm(question, total=len(question)):
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            artists = get_artists(songs, self.label_info.song_artist_dict)
+            artists = util.get_artists(songs, self.label_info.song_artist_dict)
 
             if not songs and not tags and not artists:
                 continue
 
             model_input = convert_model_input(songs, tags, artists)
             pad_model_input = self.label_info.label_encoder.transform(
-                model_input + [self.label_info.pad_token] * (self.model_input_size - len(model_input)))
+                model_input + [parameters.pad_token] * (self.model_input_size - len(model_input)))
 
             gt = self.answer_plylst_id_songs_tags_dict[each["id"]]
             gt['id'] = each["id"]
