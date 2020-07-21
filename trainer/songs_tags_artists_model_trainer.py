@@ -202,9 +202,9 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=12
             writer.add_summary(summary, epoch)
             print()
 
-    if (epoch) % 10 == 0:
-        epoch_val_score_dict[epoch] = score
-        model.saver.save(sess, os.path.join(saver_path, str(epoch) + ".ckpt"))
+        if (epoch) % 10 == 0:
+            epoch_val_score_dict[epoch] = score
+            model.saver.save(sess, os.path.join(saver_path, str(epoch) + ".ckpt"))
 
     result = []
     best_epoch, best_score = sorted(list(epoch_val_score_dict.items()), key=lambda x: x[1], reverse=True)[0]

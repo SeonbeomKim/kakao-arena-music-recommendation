@@ -7,7 +7,7 @@ import sentencepiece as spm
 import tensorflow as tf
 from data_loader.plylst_title_util import TrainUtil, ValUtil
 from evaluate import ArenaEvaluator
-from models.TitleBert import TitleBert
+from models.TitleBert_no_init import TitleBert
 from tqdm import tqdm
 
 import util
