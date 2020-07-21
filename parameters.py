@@ -1,3 +1,10 @@
+songs_cls_token = '@songs_cls'
+tags_cls_token = '@tags_cls'
+artists_cls_token = '@artists_cls'
+sep_token = '@sep'
+mask_token = '@mask'
+pad_token = '@pad'
+
 songs_tags_artists_model_embed_size = 240
 songs_tags_artists_model_multihead = 2#2
 songs_tags_artists_model_stack = 1
@@ -6,7 +13,7 @@ songs_tags_artists_model_max_sequence_length = 280
 title_model_embed_size = 128
 title_model_multihead = 2#2
 title_model_stack = 2
-title_model_max_sequence_length = 53
+title_model_max_sequence_length = 54
 
 bpe_voca_size = 6000
 bpe_character_coverage = 0.9995
