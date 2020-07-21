@@ -2,10 +2,10 @@ import os
 import random
 
 import numpy as np
+import parameters
 import sentencepiece as spm
 from tqdm import tqdm
 
-import parameters
 import util
 
 random.seed(777)
@@ -31,21 +31,21 @@ def train_sentencepiece(dataset):
         vocab_size=parameters.bpe_voca_size,
         character_coverage=parameters.bpe_character_coverage,
         model_type='bpe',
-        user_defined_symbols=['@song_cls', '@tag_cls', '@sep', '@mask', '@pad', '@unk'])
+        user_defined_symbols=[parameters.songs_cls_token, parameters.tags_cls_token, parameters.artists_cls_token,
+                              parameters.sep_token, parameters.mask_token, parameters.pad_token])
 
 
-def convert_model_input(name, songs_cls_token, tags_cls_token, sep_token, sentencepiece, model_input_size, enable_sampling=False,
-                        alpha=0.2):
-    result = [sentencepiece.piece_to_id(songs_cls_token)] + [sentencepiece.piece_to_id(
-        tags_cls_token)] + sentencepiece.encode(name, enable_sampling=enable_sampling, alpha=alpha)[:model_input_size-3] + [
-                 sentencepiece.piece_to_id(sep_token)]
+def convert_model_input(name, sentencepiece, model_input_size):
+    result = [sentencepiece.piece_to_id(parameters.songs_cls_token)] + [sentencepiece.piece_to_id(
+        parameters.tags_cls_token)] + [sentencepiece.piece_to_id(parameters.artists_cls_token)] + sentencepiece.encode(
+        name)[:model_input_size - 3] + [sentencepiece.piece_to_id(parameters.sep_token)]
     return result
 
 
 def make_mask_dataset(converted_model_input, sentencepiece):
-    prefix = converted_model_input[:2]
+    prefix = converted_model_input[:3]
     postfix = converted_model_input[-1:]
-    title_part = np.array(converted_model_input[2:-1])
+    title_part = np.array(converted_model_input[3:-1])
 
     if len(title_part) <= 1:
         return [], [], []
@@ -67,7 +67,7 @@ def make_mask_dataset(converted_model_input, sentencepiece):
             continue
 
         if mode >= 1 and mode <= 8:
-            title_part[idx] = sentencepiece.piece_to_id('@mask')
+            title_part[idx] = sentencepiece.piece_to_id(parameters.mask_token)
         elif mode == 9:
             title_part[idx] = random.randint(0, len(sentencepiece) - 1)
         elif mode == 10:
@@ -77,7 +77,6 @@ def make_mask_dataset(converted_model_input, sentencepiece):
     boolean_mask = [False] * len(prefix) + mask_position.tolist() + [False] * len(postfix)
 
     return model_input, mask_label.tolist(), boolean_mask
-
 
 
 class TrainUtil:
@@ -92,7 +91,7 @@ class TrainUtil:
 
     def make_dataset(self, shuffle=True):
         result = {"model_input": [], 'label': []}
-        pad_idx = self.sentencepiece.piece_to_id(self.label_info.pad_token)
+        pad_idx = self.sentencepiece.piece_to_id(parameters.pad_token)
 
         if shuffle:
             random.shuffle(self.dataset)
@@ -104,11 +103,11 @@ class TrainUtil:
 
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            label = songs + tags
+            artists = util.get_artists(songs, self.label_info.song_artist_dict)
 
-            model_input = convert_model_input(plylst_title, self.label_info.songs_cls_token,
-                                              self.label_info.tags_cls_token, self.label_info.sep_token,
-                                              self.sentencepiece, self.model_input_size)#, enable_sampling=True, alpha=0.1)
+            label = songs + tags + artists
+
+            model_input = convert_model_input(plylst_title, self.sentencepiece, self.model_input_size)
             pad_model_input = model_input + [pad_idx] * (self.model_input_size - len(model_input))
             label = self.label_info.label_encoder.transform(label)
 
@@ -117,10 +116,9 @@ class TrainUtil:
 
         return result
 
-
     def make_pre_train_dataset(self, shuffle=True):
         result = {"model_input": [], 'mask_label': [], 'boolean_mask': []}
-        pad_idx = self.sentencepiece.piece_to_id(self.label_info.pad_token)
+        pad_idx = self.sentencepiece.piece_to_id(parameters.pad_token)
 
         if shuffle:
             random.shuffle(self.dataset)
@@ -130,9 +128,7 @@ class TrainUtil:
             if not plylst_title:
                 continue
 
-            model_input = convert_model_input(plylst_title, self.label_info.songs_cls_token,
-                                              self.label_info.tags_cls_token, self.label_info.sep_token,
-                                              self.sentencepiece, self.model_input_size)
+            model_input = convert_model_input(plylst_title, self.sentencepiece, self.model_input_size)
             model_input, mask_label, boolean_mask = make_mask_dataset(model_input, self.sentencepiece)
             if not model_input:
                 continue
@@ -145,6 +141,7 @@ class TrainUtil:
             result["boolean_mask"].append(pad_boolean_mask)
 
         return result
+
 
 class ValUtil:
     def __init__(self, question, answer, model_input_size, label_info, sentencepiece):
@@ -167,17 +164,15 @@ class ValUtil:
         # for pretrain accuracy
         self.pre_train_accuracy_check_dataset = self.make_pre_train_accuracy_check_dataset(question)
 
-
     def get_plylst_id_songs_tags_dict(self, data):
         plylst_id_label_dict = {}
         for each in data:
             plylst_id_label_dict[each["id"]] = {'songs': each['songs'], 'tags': each['tags']}
         return plylst_id_label_dict
 
-
     def make_loss_check_dataset(self, question):
         dataset = {"model_input": [], 'label': []}
-        pad_idx = self.sentencepiece.piece_to_id(self.label_info.pad_token)
+        pad_idx = self.sentencepiece.piece_to_id(parameters.pad_token)
 
         for each in tqdm(question, total=len(question)):
             plylst_title = util.remove_special_char(each['plylst_title'])
@@ -186,19 +181,20 @@ class ValUtil:
 
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
+            artists = util.get_artists(songs, self.label_info.song_artist_dict)
+
             answer_songs = list(filter(lambda song: song in self.all_songs_set,
                                        self.answer_plylst_id_songs_tags_dict[each['id']]['songs']))
             answer_tags = list(filter(lambda tag: tag in self.all_tags_set,
                                       self.answer_plylst_id_songs_tags_dict[each['id']]['tags']))
+            answer_artists = util.get_artists(answer_songs, self.label_info.song_artist_dict)
 
-            label = songs + answer_songs + tags + answer_tags
+            label = songs + answer_songs + tags + answer_tags + artists + answer_artists
             if not label:
                 continue
             label = self.label_info.label_encoder.transform(label)
 
-            model_input = convert_model_input(plylst_title, self.label_info.songs_cls_token,
-                                              self.label_info.tags_cls_token, self.label_info.sep_token,
-                                              self.sentencepiece, self.model_input_size)
+            model_input = convert_model_input(plylst_title, self.sentencepiece, self.model_input_size)
             pad_model_input = model_input + [pad_idx] * (self.model_input_size - len(model_input))
 
             dataset["model_input"].append(pad_model_input)
@@ -206,21 +202,18 @@ class ValUtil:
 
         return dataset
 
-
     def make_ndcg_check_dataset(self, question):
         result = {'model_input': [], 'id_list': [], 'seen_songs_set': [], 'seen_tags_set': [],
                   'plylst_updt_date': [], 'gt': []}
 
-        pad_idx = self.sentencepiece.piece_to_id(self.label_info.pad_token)
+        pad_idx = self.sentencepiece.piece_to_id(parameters.pad_token)
 
         for each in tqdm(question, total=len(question)):
             plylst_title = util.remove_special_char(each['plylst_title'])
             if not plylst_title:
                 continue
 
-            model_input = convert_model_input(plylst_title, self.label_info.songs_cls_token,
-                                              self.label_info.tags_cls_token, self.label_info.sep_token,
-                                              self.sentencepiece, self.model_input_size)
+            model_input = convert_model_input(plylst_title, self.sentencepiece, self.model_input_size)
 
             pad_model_input = model_input + [pad_idx] * (self.model_input_size - len(model_input))
 
@@ -239,19 +232,16 @@ class ValUtil:
 
         return result
 
-
     def make_pre_train_accuracy_check_dataset(self, question):
         result = {"model_input": [], 'mask_label': [], 'boolean_mask': []}
-        pad_idx = self.sentencepiece.piece_to_id(self.label_info.pad_token)
+        pad_idx = self.sentencepiece.piece_to_id(parameters.pad_token)
 
         for each in tqdm(question, total=len(question)):
             plylst_title = util.remove_special_char(each['plylst_title'])
             if not plylst_title:
                 continue
 
-            model_input = convert_model_input(plylst_title, self.label_info.songs_cls_token,
-                                              self.label_info.tags_cls_token, self.label_info.sep_token,
-                                              self.sentencepiece, self.model_input_size)
+            model_input = convert_model_input(plylst_title, self.sentencepiece, self.model_input_size)
             model_input, mask_label, boolean_mask = make_mask_dataset(model_input, self.sentencepiece)
             if not model_input:
                 continue
