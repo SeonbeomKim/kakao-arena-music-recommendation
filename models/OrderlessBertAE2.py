@@ -116,7 +116,7 @@ class OrderlessBertAE:
             self.loss_with_ranking_loss = tf.reduce_mean(
                 tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
                 tf.reduce_mean(tag_loss, axis=-1)) + self.artists_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(artist_loss, axis=-1)) + 2 * self.ranking_loss
+                tf.reduce_mean(artist_loss, axis=-1)) + self.ranking_loss
 
         with tf.name_scope('predictor'):
             self.reco_songs, self.reco_songs_score = self.top_k(
