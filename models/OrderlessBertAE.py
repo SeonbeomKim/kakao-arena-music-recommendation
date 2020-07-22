@@ -65,54 +65,48 @@ class OrderlessBertAE:
         with tf.name_scope('trainer'):
             song_embedding_table = self.songs_tags_artists_embedding_table[:self.songs_num, :]
             tag_embedding_table = self.songs_tags_artists_embedding_table[
-                                    self.songs_num:self.songs_num + self.tags_num,:]
+                                  self.songs_num:self.songs_num + self.tags_num, :]
             artist_embedding_table = self.songs_tags_artists_embedding_table[
-                                     self.songs_num + self.tags_num:self.songs_num + self.tags_num + self.artists_num,:]
+                                     self.songs_num + self.tags_num:self.songs_num + self.tags_num + self.artists_num,
+                                     :]
 
             self.songs_bias = tf.get_variable('songs_bias', [1, self.songs_num], initializer=tf.zeros_initializer())
             self.tags_bias = tf.get_variable('tags_bias', [1, self.tags_num], initializer=tf.zeros_initializer())
-            self.artists_bias = tf.get_variable('artists_bias', [1, self.artists_num], initializer=tf.zeros_initializer())
+            self.artists_bias = tf.get_variable('artists_bias', [1, self.artists_num],
+                                                initializer=tf.zeros_initializer())
 
             song_predict = tf.matmul(self.song_cls_embedding, song_embedding_table, transpose_b=True) + self.songs_bias
             tag_predict = tf.matmul(self.tag_cls_embedding, tag_embedding_table, transpose_b=True) + self.tags_bias
-            artist_predict = tf.matmul(self.artist_cls_embedding, artist_embedding_table, transpose_b=True) + self.artists_bias
+            artist_predict = tf.matmul(self.artist_cls_embedding, artist_embedding_table,
+                                       transpose_b=True) + self.artists_bias
 
-            song_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=song_label, logits=song_predict)
-            tag_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tag_label, logits=tag_predict)
-            artist_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=artist_label, logits=artist_predict)
+            song_loss = self.focal_loss(tf.nn.sigmoid(song_predict), song_label, 1 - song_label)
+            tag_loss = self.focal_loss(tf.nn.sigmoid(tag_predict), tag_label, 1 - tag_label)
+            artist_loss = self.focal_loss(tf.nn.sigmoid(artist_predict), artist_label, 1 - artist_label)
 
         with tf.name_scope('ranking_loss'):
-            sigmoid_song_predict = tf.nn.sigmoid(song_predict)
-
             # index별 자기 자신의 ranking 담김 ex) song_predict = [3,1,2,5] -> ranking = [1, 3, 2, 0]
-            song_predict_ranking = tf.argsort(tf.argsort(sigmoid_song_predict, axis=-1, direction='DESCENDING'), axis=-1,
+            song_predict_ranking = tf.argsort(tf.argsort(song_predict, axis=-1, direction='DESCENDING'),
+                                              axis=-1,
                                               direction='ASCENDING')
 
-            top_k = 100 #1000
+            top_k = 100  # 1000
             top_k_song_predict_label = tf.cast(song_predict_ranking < top_k, dtype=tf.float32)
             # top_k 중 진짜 정답 위치
             correct_ranking_label = song_label * top_k_song_predict_label  # [N, song_num]
 
-            wrong_top_k = 100 #1000
+            wrong_top_k = 100  # 1000
             wrong_top_k_song_predict_label = tf.cast(song_predict_ranking < wrong_top_k, dtype=tf.float32)
             # top_k 중 틀린 정답 위치
             wrong_ranking_label = (1 - song_label) * wrong_top_k_song_predict_label
 
-            song_ranking_loss = -(correct_ranking_label * tf.log(sigmoid_song_predict + 1e-10) + (
-                    wrong_ranking_label * tf.log(1 - sigmoid_song_predict + 1e-10)))
+            # loss
+            song_ranking_loss = self.focal_loss(tf.nn.sigmoid(song_predict), correct_ranking_label, wrong_ranking_label)
 
         with tf.name_scope('total_loss'):
-            self.loss = tf.reduce_mean(
-                tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(tag_loss, axis=-1)) + self.artists_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(artist_loss, axis=-1))
-
-            self.loss_with_ranking_loss = tf.reduce_mean(
-                tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(tag_loss, axis=-1)) + self.artists_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(artist_loss, axis=-1)) + 2 * tf.reduce_mean(
-                tf.reduce_mean(song_ranking_loss, axis=-1))
-
+            self.loss = tf.reduce_mean(song_loss) + self.tags_loss_weight * tf.reduce_mean(
+                tag_loss) + self.artists_loss_weight * tf.reduce_mean(artist_loss)
+            self.loss_with_ranking_loss = self.loss + 2 * tf.reduce_mean(song_ranking_loss)
 
         with tf.name_scope('predictor'):
             self.reco_songs, self.reco_songs_score = self.top_k(
@@ -130,6 +124,15 @@ class OrderlessBertAE:
 
         with tf.name_scope("saver"):
             self.saver = tf.train.Saver(max_to_keep=10000)
+
+    def focal_loss(self, pred, pos_label, neg_label, alpha=0.25, gamma=2):
+        zeros = tf.zeros_like(pred, dtype=pred.dtype)
+
+        positive = tf.where(pos_label > zeros, pos_label - pred, zeros)
+        negative = tf.where(neg_label > zeros, pred, zeros)
+        cross_entropy = - alpha * (positive ** gamma) * tf.log(tf.clip_by_value(pred, 1e-8, 1.0)) - (1 - alpha) * (
+                negative ** gamma) * tf.log(tf.clip_by_value(1.0 - pred, 1e-8, 1.0))
+        return cross_entropy
 
     def top_k(self, predict, top_k=100):
         reco = tf.math.top_k(  # [N, label]
