@@ -10,7 +10,7 @@ songs_tags_artists_model_multihead = 2#2
 songs_tags_artists_model_stack = 1
 songs_tags_artists_model_max_sequence_length = 280
 
-title_model_embed_size = 128
+title_model_embed_size = 122
 title_model_multihead = 2#2
 title_model_stack = 2
 title_model_max_sequence_length = 54
