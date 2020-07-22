@@ -17,6 +17,7 @@ args.add_argument('--bs', type=int, default=128)
 args.add_argument('--gpu', type=int, default=6)
 args.add_argument('--tags_loss_weight', type=float, default=0.15)
 args.add_argument('--warmup_steps', type=float, default=4000)
+
 config = args.parse_args()
 bs = config.bs
 gpu = config.gpu
@@ -34,7 +35,7 @@ def get_lr(step_num):
     return lr
 
 
-def train(model, train_util, iter, batch_size=64, keep_prob=0.9, tags_loss_weight=0.5):
+def train(model, train_util, iter, batch_size=64, keep_prob=0.9, tags_loss_weight=0.15):
     if iter < 50:
         minimize_func = model.minimize
     else:
@@ -167,7 +168,7 @@ def validation_ndcg(model, val_util, label_info, batch_size=64):
     return evaluator.evaluate_from_data(dataset['gt'], reco_result)
 
 
-def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5):
+def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.15):
     loss = 0
 
     dataset = val_util.loss_check_dataset
@@ -191,7 +192,7 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.5):
 
 
 def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=512, keep_prob=0.9,
-        tags_loss_weight=0.5, restore=0):
+        tags_loss_weight=0.15):
     if not os.path.exists(saver_path):
         print("create save directory")
         os.makedirs(saver_path)
@@ -200,42 +201,38 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
         print("create save directory")
         os.makedirs(os.path.join(saver_path, 'tensorboard'))
 
-    if restore != 0:
-        model.saver.restore(sess, os.path.join(saver_path, str(restore) + ".ckpt"))
-        print('restore:', restore)
-    else:
-        with tf.name_scope("tensorboard"):
-            train_loss_tensorboard = tf.placeholder(tf.float32,
-                                                    name='train_loss')  # with regularization (minimize ??媛?
-            valid_loss_tensorboard = tf.placeholder(tf.float32, name='valid_loss')  # no regularization
-            valid_song_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_song_ndcg')  # no regularization
-            valid_tag_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_tag_ndcg')  # no regularization
-            valid_score_tensorboard = tf.placeholder(tf.float32, name='valid_score')  # no regularization
+    with tf.name_scope("tensorboard"):
+        train_loss_tensorboard = tf.placeholder(tf.float32,
+                                                name='train_loss')  # with regularization (minimize ??媛?
+        valid_loss_tensorboard = tf.placeholder(tf.float32, name='valid_loss')  # no regularization
+        valid_song_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_song_ndcg')  # no regularization
+        valid_tag_ndcg_tensorboard = tf.placeholder(tf.float32, name='valid_tag_ndcg')  # no regularization
+        valid_score_tensorboard = tf.placeholder(tf.float32, name='valid_score')  # no regularization
 
-            pre_train_loss_tensorboard = tf.placeholder(tf.float32,
-                                                        name='pre_train_loss')  # with regularization (minimize ??媛?
-            pre_valid_loss_tensorboard = tf.placeholder(tf.float32, name='pre_valid_loss')  # no regularization
+        pre_train_loss_tensorboard = tf.placeholder(tf.float32,
+                                                    name='pre_train_loss')  # with regularization (minimize ??媛?
+        pre_valid_loss_tensorboard = tf.placeholder(tf.float32, name='pre_valid_loss')  # no regularization
 
-            pre_train_loss_summary = tf.summary.scalar("pre_train_loss", pre_train_loss_tensorboard)
-            pre_valid_loss_summary = tf.summary.scalar("pre_valid_loss", pre_valid_loss_tensorboard)
+        pre_train_loss_summary = tf.summary.scalar("pre_train_loss", pre_train_loss_tensorboard)
+        pre_valid_loss_summary = tf.summary.scalar("pre_valid_loss", pre_valid_loss_tensorboard)
 
-            train_loss_summary = tf.summary.scalar("train_loss", train_loss_tensorboard)
-            valid_loss_summary = tf.summary.scalar("valid_loss", valid_loss_tensorboard)
-            valid_song_ndcg_summary = tf.summary.scalar("valid_song_ndcg", valid_song_ndcg_tensorboard)
-            valid_tag_ndcg_summary = tf.summary.scalar("valid_tag_ndcg", valid_tag_ndcg_tensorboard)
-            valid_score_summary = tf.summary.scalar("valid_score", valid_score_tensorboard)
+        train_loss_summary = tf.summary.scalar("train_loss", train_loss_tensorboard)
+        valid_loss_summary = tf.summary.scalar("valid_loss", valid_loss_tensorboard)
+        valid_song_ndcg_summary = tf.summary.scalar("valid_song_ndcg", valid_song_ndcg_tensorboard)
+        valid_tag_ndcg_summary = tf.summary.scalar("valid_tag_ndcg", valid_tag_ndcg_tensorboard)
+        valid_score_summary = tf.summary.scalar("valid_score", valid_score_tensorboard)
 
-            # merged = tf.summary.merge_all()
-            merged_train = tf.summary.merge([train_loss_summary])
-            merged_valid = tf.summary.merge(
-                [valid_loss_summary, valid_song_ndcg_summary, valid_tag_ndcg_summary, valid_score_summary])
+        # merged = tf.summary.merge_all()
+        merged_train = tf.summary.merge([train_loss_summary])
+        merged_valid = tf.summary.merge(
+            [valid_loss_summary, valid_song_ndcg_summary, valid_tag_ndcg_summary, valid_score_summary])
 
-            merged_pre_train = tf.summary.merge([pre_train_loss_summary])
-            merged_pre_valid = tf.summary.merge([pre_valid_loss_summary])
+        merged_pre_train = tf.summary.merge([pre_train_loss_summary])
+        merged_pre_valid = tf.summary.merge([pre_valid_loss_summary])
 
-            writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
+        writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
 
-    for epoch in range(1, 51):
+    for epoch in range(1, 61):
         pre_train_loss = pre_train_masked_LM(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob)
         print('pre_train_loss_masked_LM epoch: %d, pre_train_loss: %f' % (epoch, pre_train_loss))
 
@@ -244,7 +241,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
         print()
 
     epoch_val_score_dict = {}
-    for epoch in range(restore + 1, 201):
+    for epoch in range(1, 201):
         train_loss = train(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob,
                            tags_loss_weight=tags_loss_weight)
         print("TITLE epoch: %d, train_loss: %f" % (epoch, train_loss))
@@ -281,6 +278,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
     result.append(saver_path)
     util.dump(result, os.path.join(parameters.base_dir, 'title_result_info.pickle'))
 
+
 # make train / val set
 train_set = util.load_json('dataset/orig/train.json')
 val_question = util.load_json('dataset/questions/val.json')
@@ -307,11 +305,10 @@ model = TitleBert(
     max_sequence_length=parameters.title_model_max_sequence_length,
     encoder_decoder_stack=parameters.title_model_stack,
     multihead_num=parameters.title_model_multihead,
-    pad_idx=sp.piece_to_id(label_info.pad_token),
+    pad_idx=sp.piece_to_id(parameters.pad_token),
     songs_num=len(label_info.songs),
     tags_num=len(label_info.tags))
 
-# gpu ?좊떦 諛?session ?앹꽦
 os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -330,5 +327,4 @@ run(
         parameters.title_model_multihead, tags_loss_weight, bs, warmup_steps),
     batch_size=bs,
     keep_prob=0.9,
-    tags_loss_weight=tags_loss_weight,
-    restore=0)
+    tags_loss_weight=tags_loss_weight)

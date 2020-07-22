@@ -1,3 +1,5 @@
+import parameters
+
 import util
 
 
@@ -5,16 +7,12 @@ class Label_info:
     def __init__(self, dataset, song_meta, songs_recall=0.9, tags_recall=0.95, artists_recall=0.9):
         self.songs = []
         self.tags = []
-        self.songs_cls_token = '@song_cls'
-        self.tags_cls_token = '@tag_cls'
-        self.pad_token = '@pad'
-        self.sep_token = '@sep'
-        self.others_for_encoder = [self.songs_cls_token, self.tags_cls_token, self.pad_token, self.sep_token]
+        self.others_for_encoder = [parameters.songs_cls_token, parameters.tags_cls_token, parameters.artists_cls_token,
+                                   parameters.pad_token, parameters.sep_token]
 
         self.label_encoder = util.LabelEncoder(tokens=self.others_for_encoder)
         self.set_label_encoder(dataset, song_meta, songs_recall=songs_recall, tags_recall=tags_recall,
                                artists_recall=artists_recall)
-
 
     def get_item_freq_dict(self, dataset, item_key):
         freq_dict = {}

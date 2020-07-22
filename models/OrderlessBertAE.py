@@ -49,6 +49,7 @@ class OrderlessBertAE:
             # get cls embedding
             self.song_cls_embedding = self.encoder_embedding[:, 0, :]  # [N, self.embedding_size]
             self.tag_cls_embedding = self.encoder_embedding[:, 1, :]  # [N, self.embedding_size]
+            self.artist_cls_embedding = self.encoder_embedding[:, 2, :]  # [N, self.embedding_size]
 
         with tf.name_scope('label'):
             label_sparse_tensor = tf.SparseTensor(indices=self.sparse_label,
@@ -74,7 +75,7 @@ class OrderlessBertAE:
 
             song_predict = tf.matmul(self.song_cls_embedding, song_embedding_table, transpose_b=True) + self.songs_bias
             tag_predict = tf.matmul(self.tag_cls_embedding, tag_embedding_table, transpose_b=True) + self.tags_bias
-            artist_predict = tf.matmul(self.song_cls_embedding, artist_embedding_table, transpose_b=True) + self.artists_bias
+            artist_predict = tf.matmul(self.artist_cls_embedding, artist_embedding_table, transpose_b=True) + self.artists_bias
 
             song_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=song_label, logits=song_predict)
             tag_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tag_label, logits=tag_predict)
