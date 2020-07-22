@@ -232,7 +232,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
 
         writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
 
-    for epoch in range(1, 61):
+    for epoch in range(1, 101):
         pre_train_loss = pre_train_masked_LM(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob)
         print('pre_train_loss_masked_LM epoch: %d, pre_train_loss: %f' % (epoch, pre_train_loss))
 
