@@ -31,21 +31,21 @@ def train_sentencepiece(dataset):
         vocab_size=parameters.bpe_voca_size,
         character_coverage=parameters.bpe_character_coverage,
         model_type='bpe',
-        user_defined_symbols=[parameters.songs_cls_token, parameters.tags_cls_token, parameters.artists_cls_token,
+        user_defined_symbols=[parameters.songs_cls_token, parameters.tags_cls_token,
                               parameters.sep_token, parameters.mask_token, parameters.pad_token])
 
 
 def convert_model_input(name, sentencepiece, model_input_size):
     result = [sentencepiece.piece_to_id(parameters.songs_cls_token)] + [sentencepiece.piece_to_id(
-        parameters.tags_cls_token)] + [sentencepiece.piece_to_id(parameters.artists_cls_token)] + sentencepiece.encode(
+        parameters.tags_cls_token)] + sentencepiece.encode(
         name)[:model_input_size - 3] + [sentencepiece.piece_to_id(parameters.sep_token)]
     return result
 
 
 def make_mask_dataset(converted_model_input, sentencepiece):
-    prefix = converted_model_input[:3]
+    prefix = converted_model_input[:2]
     postfix = converted_model_input[-1:]
-    title_part = np.array(converted_model_input[3:-1])
+    title_part = np.array(converted_model_input[2:-1])
 
     if len(title_part) <= 1:
         return [], [], []
@@ -103,9 +103,8 @@ class TrainUtil:
 
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            artists = util.get_artists(songs, self.label_info.song_artist_dict)
 
-            label = songs + tags + artists
+            label = songs + tags
 
             model_input = convert_model_input(plylst_title, self.sentencepiece, self.model_input_size)
             pad_model_input = model_input + [pad_idx] * (self.model_input_size - len(model_input))
@@ -181,15 +180,13 @@ class ValUtil:
 
             songs = list(filter(lambda song: song in self.all_songs_set, each['songs']))
             tags = list(filter(lambda tag: tag in self.all_tags_set, each['tags']))
-            artists = util.get_artists(songs, self.label_info.song_artist_dict)
 
             answer_songs = list(filter(lambda song: song in self.all_songs_set,
                                        self.answer_plylst_id_songs_tags_dict[each['id']]['songs']))
             answer_tags = list(filter(lambda tag: tag in self.all_tags_set,
                                       self.answer_plylst_id_songs_tags_dict[each['id']]['tags']))
-            answer_artists = util.get_artists(answer_songs, self.label_info.song_artist_dict)
 
-            label = songs + answer_songs + tags + answer_tags + artists + answer_artists
+            label = songs + answer_songs + tags + answer_tags
             if not label:
                 continue
             label = self.label_info.label_encoder.transform(label)
