@@ -19,7 +19,7 @@ args.add_argument('--gpu', type=int, default=6)
 args.add_argument('--title_importance', type=float, default=0.85)
 args.add_argument('--title_tag_weight', type=float, default=0.8)
 args.add_argument('--question_path', type=str, default='./dataset/val.json')
-args.add_argument('--out_path', type=float, default='./reco_result/results.json')
+args.add_argument('--out_path', type=str, default='./reco_result/results.json')
 
 config = args.parse_args()
 bs = config.bs
