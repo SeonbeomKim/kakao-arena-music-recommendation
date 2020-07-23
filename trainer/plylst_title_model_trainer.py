@@ -9,7 +9,7 @@ from data_loader.plylst_title_util import TrainUtil, ValUtil
 from evaluate import ArenaEvaluator
 from models.TitleBert import TitleBert
 from tqdm import tqdm
-
+from glob import glob
 import util
 
 args = argparse.ArgumentParser()
@@ -190,6 +190,16 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.15):
 
     return loss / epoch
 
+def save_model(model, sess, path, epoch):
+    for each in glob(os.path.join(path, '*')):
+        if 'tensorboard' in each:
+            continue
+        print('rm %s' % each)
+        os.remove(each)
+
+    new_best_model_path = os.path.join(path, '%d.ckpt' % epoch)
+    print('save new best_model: %s' % new_best_model_path)
+    model.saver.save(sess, new_best_model_path)
 
 def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=512, keep_prob=0.9,
         tags_loss_weight=0.15):
@@ -232,6 +242,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
 
         writer = tf.summary.FileWriter(os.path.join(saver_path, 'tensorboard'), sess.graph)
 
+    # pretrain
     for epoch in range(1, 101):
         pre_train_loss = pre_train_masked_LM(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob)
         print('pre_train_loss_masked_LM epoch: %d, pre_train_loss: %f' % (epoch, pre_train_loss))
@@ -240,8 +251,8 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
         print('pre_train_valid_loss: %f, pre_train_valid_accuracy: %f' % (valid_loss, accuracy))
         print()
 
-    epoch_val_score_dict = {}
-    for epoch in range(1, 201):
+    best_model_dict = {'epoch': 0, 'score': 0, 'saver_path': saver_path}
+    for epoch in range(1, 501):
         train_loss = train(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob,
                            tags_loss_weight=tags_loss_weight)
         print("TITLE epoch: %d, train_loss: %f" % (epoch, train_loss))
@@ -267,16 +278,19 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
             writer.add_summary(summary, epoch)
             print()
 
-        if (epoch) % 10 == 0:
-            epoch_val_score_dict[epoch] = score
-            model.saver.save(sess, os.path.join(saver_path, str(epoch) + ".ckpt"))
+            if score > best_model_dict['score']:
+                best_model_dict['score'] = score
+                best_model_dict['epoch'] = epoch
+                print(
+                    'best_model_epoch: %d, best_model_score: %f' % (best_model_dict['epoch'], best_model_dict['score']))
+                save_model(model, sess, saver_path, epoch)
 
-    result = []
-    best_epoch, best_score = sorted(list(epoch_val_score_dict.items()), key=lambda x: x[1], reverse=True)[0]
-    result.append(best_epoch)
-    result.append(best_score)
-    result.append(saver_path)
-    util.dump(result, os.path.join(parameters.base_dir, 'title_result_info.pickle'))
+            # 50번동안 최고 성적 안나왔으면 멈춤
+            if epoch >= best_model_dict['epoch'] + 50:
+                print('50번동안 최고 성적 안나와서 stop')
+                break
+
+    util.dump(best_model_dict, os.path.join(parameters.base_dir, 'plylst_title_best_model_dict.pickle'))
 
 
 # make train / val set
