@@ -145,7 +145,7 @@ def save_model(model, sess, path, epoch):
     for each in glob(os.path.join(path, '*')):
         if 'tensorboard' in each:
             continue
-        print('rm %s', each)
+        print('rm %s' % each)
         os.remove(each)
 
     new_best_model_path = os.path.join(path, '%d.ckpt' % epoch)
