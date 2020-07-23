@@ -281,17 +281,17 @@ if __name__ == "__main__":
 
     ensemble = Ensemble(label_info, song_issue_dict, sp, gpu)
 
-    plylst_title_model_info = util.load('title_result_info.pickle')
-    plylst_title_model_best_epoch = plylst_title_model_info[0]
-    plylst_title_model_saver_path = plylst_title_model_info[-1]
+    plylst_title_best_model_dict = util.load('plylst_title_best_model_dict.pickle')
+    plylst_title_model_best_epoch = plylst_title_best_model_dict['epoch']
+    plylst_title_model_saver_path = plylst_title_best_model_dict['saver_path']
 
     ensemble.load_plylst_title_model(
         plylst_title_model_saver_path,
         epoch=plylst_title_model_best_epoch)
 
-    songs_tags_artists_model_info = util.load('songs_tags_artists_result_info.pickle')
-    songs_tags_artists_model_best_epoch = songs_tags_artists_model_info[0]
-    songs_tags_artists_model_saver_path = songs_tags_artists_model_info[-1]
+    songs_tags_artists_best_model_dict = util.load('songs_tags_artists_best_model_dict.pickle')
+    songs_tags_artists_model_best_epoch = songs_tags_artists_best_model_dict['epoch']
+    songs_tags_artists_model_saver_path = songs_tags_artists_best_model_dict['saver_path']
 
     ensemble.load_songs_tags_artists_model(
         songs_tags_artists_model_saver_path,
