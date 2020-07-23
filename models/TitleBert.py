@@ -1,9 +1,5 @@
-# https://arxiv.org/abs/1706.03762 Attention Is All You Need(Transformer)
-# https://arxiv.org/abs/1607.06450 Layer Normalization
-# https://arxiv.org/abs/1512.00567 Label Smoothing
-
 import tensorflow as tf  # version 1.4
-
+import numpy as np
 
 class TitleBert:
     def __init__(self, voca_size, embedding_size, is_embedding_scale, max_sequence_length,
@@ -83,12 +79,14 @@ class TitleBert:
             song_predict = tf.matmul(self.song_cls_embedding, song_embedding_table, transpose_b=True) + self.songs_bias
             tag_predict = tf.matmul(self.tag_cls_embedding, tag_embedding_table, transpose_b=True) + self.tags_bias
 
-            song_loss = self.focal_loss(tf.nn.sigmoid(song_predict), song_label, 1 - song_label)
-            tag_loss = self.focal_loss(tf.nn.sigmoid(tag_predict), tag_label, 1 - tag_label)
+            song_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=song_label, logits=song_predict)
+            tag_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tag_label, logits=tag_predict)
 
         with tf.name_scope('ranking_loss'):
+            sigmoid_song_predict = tf.nn.sigmoid(song_predict)
+
             # index별 자기 자신의 ranking 담김 ex) song_predict = [3,1,2,5] -> ranking = [1, 3, 2, 0]
-            song_predict_ranking = tf.argsort(tf.argsort(song_predict, axis=-1, direction='DESCENDING'),
+            song_predict_ranking = tf.argsort(tf.argsort(sigmoid_song_predict, axis=-1, direction='DESCENDING'),
                                               axis=-1,
                                               direction='ASCENDING')
 
@@ -102,8 +100,8 @@ class TitleBert:
             # top_k 중 틀린 정답 위치
             wrong_ranking_label = (1 - song_label) * wrong_top_k_song_predict_label
 
-            # loss
-            song_ranking_loss = self.focal_loss(tf.nn.sigmoid(song_predict), correct_ranking_label, wrong_ranking_label)
+            song_ranking_loss = -(correct_ranking_label * tf.log(sigmoid_song_predict + 1e-10) + (
+                    wrong_ranking_label * tf.log(1 - sigmoid_song_predict + 1e-10)))
 
         with tf.name_scope('total_loss'):
             self.loss = tf.reduce_mean(song_loss) + self.tags_loss_weight * tf.reduce_mean(tag_loss)
@@ -153,15 +151,6 @@ class TitleBert:
         with tf.name_scope("saver"):
             self.saver = tf.train.Saver(max_to_keep=10000)
 
-
-    def focal_loss(self, pred, pos_label, neg_label, alpha=0.25, gamma=2):
-        zeros = tf.zeros_like(pred, dtype=pred.dtype)
-
-        positive = tf.where(pos_label > zeros, pos_label - pred, zeros)
-        negative = tf.where(neg_label > zeros, pred, zeros)
-        cross_entropy = - alpha * (positive ** gamma) * tf.log(tf.clip_by_value(pred, 1e-8, 1.0)) - (1 - alpha) * (
-                negative ** gamma) * tf.log(tf.clip_by_value(1.0 - pred, 1e-8, 1.0))
-        return cross_entropy
 
     def top_k(self, predict, top_k=100):
         reco = tf.math.top_k(  # [N, label]
@@ -234,7 +223,7 @@ class TitleBert:
                 Multihead_add_norm,
                 self.embedding_size,
                 output_mask=encoder_input_mask,  # set 0 bias added pad position
-                activation=tf.nn.relu,
+                activation=self.gelu,
                 name='encoder_dense' + str(i)
             )  # [N, self.encoder_input_length, self.embedding_size]
 
@@ -367,3 +356,18 @@ class TitleBert:
             dense += embedding
 
         return dense
+
+    def gelu(self, x):  # https://github.com/google-research/bert/blob/master/modeling.py
+        """Gaussian Error Linear Unit.
+
+        This is a smoother version of the RELU.
+        Original paper: https://arxiv.org/abs/1606.08415
+        Args:
+            x: float Tensor to perform activation.
+
+        Returns:
+            `x` with the GELU activation applied.
+        """
+        cdf = 0.5 * (1.0 + tf.tanh(
+            (np.sqrt(2 / np.pi) * (x + 0.044715 * tf.pow(x, 3)))))
+        return x * cdf
