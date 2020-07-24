@@ -145,6 +145,8 @@ def save_model(model, sess, path, epoch):
     for each in glob(os.path.join(path, '*')):
         if 'tensorboard' in each:
             continue
+        if 'checkpoint' in each:
+            continue
         print('rm %s' % each)
         os.remove(each)
 
@@ -210,14 +212,14 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=12
             writer.add_summary(summary, epoch)
             print()
 
+            print('best_model_epoch: %d, best_model_score: %f' % (best_model_dict['epoch'], best_model_dict['score']))
             if score > best_model_dict['score']:
                 best_model_dict['score'] = score
                 best_model_dict['epoch'] = epoch
-                print('best_model_epoch: %d, best_model_score: %f' % (best_model_dict['epoch'], best_model_dict['score']))
                 save_model(model, sess, saver_path, epoch)
 
-            # 30번동안 최고 성적 안나왔으면 멈춤
-            if epoch >= best_model_dict['epoch'] + 30:
+            # 50번동안 최고 성적 안나왔으면 멈춤
+            if epoch >= best_model_dict['epoch'] + 50:
                 print('early stopping')
                 break
 
