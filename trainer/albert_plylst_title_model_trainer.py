@@ -214,10 +214,6 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
         print("create save directory")
         os.makedirs(os.path.join(saver_path, 'tensorboard'))
 
-    new_best_model_path = os.path.join(saver_path, '%d.ckpt' % 0)
-    print('save new best_model: %s' % new_best_model_path)
-    model.saver.save(sess, new_best_model_path)
-
     with tf.name_scope("tensorboard"):
         train_loss_tensorboard = tf.placeholder(tf.float32,
                                                 name='train_loss')  # with regularization (minimize ??媛?
