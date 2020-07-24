@@ -5,27 +5,15 @@ sep_token = '@sep'
 mask_token = '@mask'
 pad_token = '@pad'
 
-songs_tags_artists_model_embed_size = 220
-songs_tags_artists_model_hidden_size = 600
+songs_tags_artists_model_embed_size = 240
 songs_tags_artists_model_multihead = 2#2
 songs_tags_artists_model_stack = 1
 songs_tags_artists_model_max_sequence_length = 280
 
-title_model_embed_size = 120
-title_model_hidden_size = 360
+title_model_embed_size = 132
 title_model_multihead = 2#2
 title_model_stack = 2
 title_model_max_sequence_length = 53
-
-# songs_tags_artists_model_embed_size = 240
-# songs_tags_artists_model_multihead = 2#2
-# songs_tags_artists_model_stack = 1
-# songs_tags_artists_model_max_sequence_length = 280
-#
-# title_model_embed_size = 132
-# title_model_multihead = 2#2
-# title_model_stack = 2
-# title_model_max_sequence_length = 53
 
 bpe_voca_size = 6000
 bpe_character_coverage = 0.9995
