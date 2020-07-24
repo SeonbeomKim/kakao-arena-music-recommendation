@@ -223,7 +223,7 @@ class TitleBert:
                 Multihead_add_norm,
                 self.embedding_size,
                 output_mask=encoder_input_mask,  # set 0 bias added pad position
-                activation=self.gelu,
+                activation=tf.nn.relu, # gelu보다 성능 잘나옴
                 name='encoder_dense' + str(i)
             )  # [N, self.encoder_input_length, self.embedding_size]
 
@@ -357,17 +357,17 @@ class TitleBert:
 
         return dense
 
-    def gelu(self, x):  # https://github.com/google-research/bert/blob/master/modeling.py
-        """Gaussian Error Linear Unit.
-
-        This is a smoother version of the RELU.
-        Original paper: https://arxiv.org/abs/1606.08415
-        Args:
-            x: float Tensor to perform activation.
-
-        Returns:
-            `x` with the GELU activation applied.
-        """
-        cdf = 0.5 * (1.0 + tf.tanh(
-            (np.sqrt(2 / np.pi) * (x + 0.044715 * tf.pow(x, 3)))))
-        return x * cdf
+    # def gelu(self, x):  # https://github.com/google-research/bert/blob/master/modeling.py
+    #     """Gaussian Error Linear Unit.
+    #
+    #     This is a smoother version of the RELU.
+    #     Original paper: https://arxiv.org/abs/1606.08415
+    #     Args:
+    #         x: float Tensor to perform activation.
+    #
+    #     Returns:
+    #         `x` with the GELU activation applied.
+    #     """
+    #     cdf = 0.5 * (1.0 + tf.tanh(
+    #         (np.sqrt(2 / np.pi) * (x + 0.044715 * tf.pow(x, 3)))))
+    #     return x * cdf
