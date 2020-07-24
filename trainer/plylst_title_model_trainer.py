@@ -1,4 +1,5 @@
 import os
+from glob import glob
 
 import argparse
 import numpy as np
@@ -9,7 +10,7 @@ from data_loader.plylst_title_util import TrainUtil, ValUtil
 from evaluate import ArenaEvaluator
 from models.TitleBert import TitleBert
 from tqdm import tqdm
-from glob import glob
+
 import util
 
 args = argparse.ArgumentParser()
@@ -190,9 +191,12 @@ def validation_loss(model, val_util, batch_size=64, tags_loss_weight=0.15):
 
     return loss / epoch
 
+
 def save_model(model, sess, path, epoch):
     for each in glob(os.path.join(path, '*')):
         if 'tensorboard' in each:
+            continue
+        if 'checkpoint' in each:
             continue
         print('rm %s' % each)
         os.remove(each)
@@ -200,6 +204,7 @@ def save_model(model, sess, path, epoch):
     new_best_model_path = os.path.join(path, '%d.ckpt' % epoch)
     print('save new best_model: %s' % new_best_model_path)
     model.saver.save(sess, new_best_model_path)
+
 
 def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=512, keep_prob=0.9,
         tags_loss_weight=0.15):
@@ -278,11 +283,10 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
             writer.add_summary(summary, epoch)
             print()
 
+            print('best_model_epoch: %d, best_model_score: %f' % (best_model_dict['epoch'], best_model_dict['score']))
             if score > best_model_dict['score']:
                 best_model_dict['score'] = score
                 best_model_dict['epoch'] = epoch
-                print(
-                    'best_model_epoch: %d, best_model_score: %f' % (best_model_dict['epoch'], best_model_dict['score']))
                 save_model(model, sess, saver_path, epoch)
 
             # 50번동안 최고 성적 안나왔으면 멈춤
