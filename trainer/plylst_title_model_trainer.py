@@ -252,7 +252,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
         print()
 
     best_model_dict = {'epoch': 0, 'score': 0, 'saver_path': saver_path}
-    for epoch in range(1, 501):
+    for epoch in range(1, 301):
         train_loss = train(model, train_util, epoch, batch_size=batch_size, keep_prob=keep_prob,
                            tags_loss_weight=tags_loss_weight)
         print("TITLE epoch: %d, train_loss: %f" % (epoch, train_loss))
@@ -287,7 +287,7 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=51
 
             # 50번동안 최고 성적 안나왔으면 멈춤
             if epoch >= best_model_dict['epoch'] + 50:
-                print('50번동안 최고 성적 안나와서 stop')
+                print('early stopping')
                 break
 
     util.dump(best_model_dict, os.path.join(parameters.base_dir, 'plylst_title_best_model_dict.pickle'))
