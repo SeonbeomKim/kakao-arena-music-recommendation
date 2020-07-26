@@ -79,7 +79,7 @@
                --gt_fname=dataset/answers/val.json \
                --rec_fname=./reco_result/results.json    
     
-* 대회 제출 포맷 코드 (0번 gpu로 실행되도록 처)
+* 대회 제출 포맷 코드 (0번 gpu로 실행되도록 처리)
     * 학습: python3 train.py
     * 추천: python3 inference.py
         * './reco_result/results.json' 파일 생성 
@@ -114,6 +114,6 @@
             * pre norm 적용
         * 6000개의 bpe 토큰으로 MLM pretraining
         * 그 후 plylst title을 bpe로 tokenize 하고, [songs cls, tags cls, plylst title(bpe)] 를 모델의 Input으로 사용
-        * 원본의 songs, tags를 예측하도록 binary cross entropy 학습
+        * songs, tags를 예측하도록 binary cross entropy 학습
             * songs cls output으로 songs 예측, tags cls output으로 tags 예측
         
