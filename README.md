@@ -80,6 +80,7 @@
                --rec_fname=./reco_result/results.json    
     
 * 대회 제출 포맷 코드 (0번 gpu로 실행되도록 처리)
+    * 1~3 단계 수행 후 실행
     * 학습: python3 train.py
     * 추천: python3 inference.py
         * './reco_result/results.json' 파일 생성 
