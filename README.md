@@ -99,3 +99,21 @@
         * Tag nDCG: 0.534060
         * Score: 0.321831
         
+* 모델 아키텍처
+    * songs_tags_artists_model
+        * bert based denoising autoencoder 방식
+            * 순서가 중요하지 않으므로 position embedding 제외, segment embedding 제외
+            * pre norm 적용
+        * plylst에 담긴 songs, tags, artists를 mask 처리하고, [songs cls, tags cls, artists cls, songs, tags, artists] 를 모델의 Input으로 사용
+        * 원본의 songs, tags, artists를 예측하도록 binary cross entropy로 학습
+            * songs cls output으로 songs 예측, tags cls output으로 tags 예측, artists cls output으로 artists 예측
+
+    * plylst_title_model
+        * bert based model
+            * relu가 gelu 보다 성능이 좋아서 relu로 사용, segment embedding 제외
+            * pre norm 적용
+        * 6000개의 bpe 토큰으로 MLM pretraining
+        * 그 후 plylst title을 bpe로 tokenize 하고, [songs cls, tags cls, plylst title(bpe)] 를 모델의 Input으로 사용
+        * 원본의 songs, tags를 예측하도록 binary cross entropy 학습
+            * songs cls output으로 songs 예측, tags cls output으로 tags 예측
+        
