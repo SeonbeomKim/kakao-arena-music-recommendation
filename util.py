@@ -1,10 +1,8 @@
 import json
 import os
 import pickle
-import random
 
 import numpy as np
-import parameters
 import re
 from datetime import datetime
 
@@ -49,46 +47,12 @@ def convert_updt_date(updt_date):
     return int(dtime.strftime("%Y%m%d"))
 
 
-def get_year_label(updt_date):
-    # base_year 미만은 0, base_year는 1, 나머지는 1씩 증가
-    updt_date = convert_updt_date(updt_date)
-    year = int(str(updt_date)[:4])
-    if year < parameters.base_year:
-        return '@old'
-    else:
-        return '@%d' % year
-
-
-def select_bucket(data_size, bucket_size):
-    for bucket in bucket_size:
-        if data_size <= bucket:
-            return bucket
-    return None
-
-
 def label_to_sparse_label(label):
     sparse_label = []
     for row in range(len(label)):
         for _label in label[row]:
             sparse_label.append([row, _label])
     return sparse_label
-
-
-def get_k_negative_label(positive_label_set, total_label, k):
-    negative_label = []
-
-    for _negative in random.sample(total_label, k + len(positive_label_set)):
-        if len(negative_label) == k:
-            break
-        if _negative in positive_label_set:
-            continue
-        if _negative in negative_label:
-            continue
-        negative_label.append(_negative)
-
-    if len(negative_label) != k:
-        print('%d != %d' % (len(negative_label), k))
-    return negative_label
 
 
 def dump(data, fname):
@@ -128,13 +92,6 @@ def write_json(data, fname):
     with open(fname, "w", encoding="utf-8") as f:
         json_str = json.dumps(data, ensure_ascii=False, default=_conv)
         f.write(json_str)
-
-
-# def fill_na(data, fill_value=0):
-#     # data:[[1,2],[1],[1,2,3]]
-#     # return: [[1,2,fill_value], [1,fill_value,fill_value], [1,2,3]]
-#     df = pd.DataFrame(data)
-#     return df.fillna(fill_value).values  # numpy type
 
 
 class LabelEncoder:
