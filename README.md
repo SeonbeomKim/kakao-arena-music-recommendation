@@ -1,3 +1,10 @@
+* 환경
+    * python3.6
+    * GPU: NVIDIA TITAN X
+    * cuda: 10.0
+    * cudnn: 7
+    * ubuntu: 18.04
+    
 * pip list
     * tensorflow-gpu (1.14.0)
     * sentencepiece (0.1.91)
@@ -17,10 +24,10 @@
     *   train.json, val.json, test.json, song_meta.json 파일을 다운받아 dataset 폴더에 넣는다.
     
 3. 데이터셋 전처리
-    *     python data_loader/dump_datasets.py
+    *     python3 data_loader/dump_datasets.py
 
 4. 노래, 태그, 아티스트 기반의 추천 모델 학습
-    *     python trainer/songs_tags_artists_model_trainer.py \
+    *     python3 trainer/songs_tags_artists_model_trainer.py \
                 --gpu={gpu number}
         ```
         args.add_argument('--bs', type=int, default=128)
@@ -31,7 +38,7 @@
         ```
 
 4. 플레이리스트 타이틀 기반의 추천 모델 학습
-    *     python trainer/plylst_title_model_trainer.py \
+    *     python3 trainer/plylst_title_model_trainer.py \
                 --gpu={gpu number}
         ```
         args.add_argument('--bs', type=int, default=128)
@@ -41,7 +48,7 @@
         ```
 
 5. 두개의 추천 모델을 합쳐서 노래, 태그 추천
-    *     python predictor/Ensemble.py \
+    *     python3 predictor/Ensemble.py \
                 --gpu={gpu number} \
                 --question_path={question_path} \
                 --out_path={out_path}
@@ -68,5 +75,27 @@
         ```
         
 6. offline test validation set 채점하기
-    *     python evaluate.py evaluate --gt_fname=dataset/answers/val.json --rec_fname=./reco_result/results.json
+    *     python3 evaluate.py evaluate \
+               --gt_fname=dataset/answers/val.json \
+               --rec_fname=./reco_result/results.json    
     
+* 대회 제출 포맷 코드 (0번 gpu로 실행되도록 처리)
+    * 학습: python3 train.py
+    * 추천: python3 inference.py
+        * './reco_result/results.json' 파일 생성 
+        
+        
+* 최종 제출한 모델
+    * https://drive.google.com/file/d/1_4eStrTY3c96cigmgB8ydNg3Sqmz_y26/view?usp=sharing
+    * 1~3 단계 수행 후 모델 파일을 clone 받은 kakao-arena-music-recommendation repo path에 삽입
+    * 그 후 단계 5를 수행(원하는 입력에 대한 추천)하거나 inference.py를 수행(test 데이터에 대해서만 추천)하면 됨.
+    
+    * dataset/questions/val.json 기반 추천 결과 (dataset/answers/val.json 으로 채점)
+        * music nDCG: 0.282904
+        * Tag nDCG: 0.563226
+        * Score: 0.324953    
+    * dataset/val.json 기반 추천 결과 (리더보드)
+        * music nDCG: 0.283642
+        * Tag nDCG: 0.533388
+        * Score: 0.321104
+        
