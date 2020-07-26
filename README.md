@@ -79,7 +79,7 @@
                --gt_fname=dataset/answers/val.json \
                --rec_fname=./reco_result/results.json    
     
-* 대회 제출 포맷 코드 (0번 gpu로 실행되도록 처리)
+* 대회 제출 포맷 코드 (0번 gpu로 실행되도록 처)
     * 학습: python3 train.py
     * 추천: python3 inference.py
         * './reco_result/results.json' 파일 생성 
@@ -95,7 +95,7 @@
         * Tag nDCG: 0.563226
         * Score: 0.324953    
     * dataset/val.json 기반 추천 결과 (리더보드)
-        * music nDCG: 0.283642
-        * Tag nDCG: 0.533388
-        * Score: 0.321104
+        * music nDCG: 0.284379
+        * Tag nDCG: 0.534060
+        * Score: 0.321831
         
