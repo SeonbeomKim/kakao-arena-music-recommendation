@@ -1,4 +1,5 @@
 import os
+from glob import glob
 
 import argparse
 import numpy as np
@@ -8,7 +9,6 @@ from data_loader.songs_tags_artists_util import TrainUtil, ValUtil
 from evaluate import ArenaEvaluator
 from models.OrderlessBertAE import OrderlessBertAE
 from tqdm import tqdm
-from glob import glob
 
 import util
 
@@ -216,6 +216,9 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=12
                 best_model_dict['score'] = score
                 best_model_dict['epoch'] = epoch
                 save_model(model, sess, saver_path, epoch)
+                util.dump(best_model_dict,
+                          os.path.join(parameters.base_dir, 'songs_tags_artists_best_model_dict.pickle'))
+
             print('best_model_epoch: %d, best_model_score: %f' % (best_model_dict['epoch'], best_model_dict['score']))
 
             # 50번동안 최고 성적 안나왔으면 멈춤
@@ -223,7 +226,6 @@ def run(model, sess, train_util, val_util, label_info, saver_path, batch_size=12
                 print('early stopping')
                 break
 
-    util.dump(best_model_dict, os.path.join(parameters.base_dir, 'songs_tags_artists_best_model_dict.pickle'))
 
 # make train / val set
 train_set = util.load_json('dataset/orig/train.json')
