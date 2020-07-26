@@ -1,9 +1,5 @@
-# https://arxiv.org/abs/1706.03762 Attention Is All You Need(Transformer)
-# https://arxiv.org/abs/1607.06450 Layer Normalization
-# https://arxiv.org/abs/1512.00567 Label Smoothing
-
 import tensorflow as tf  # version 1.4
-
+import numpy as np
 
 class TitleBert:
     def __init__(self, voca_size, embedding_size, is_embedding_scale, max_sequence_length,
@@ -108,14 +104,8 @@ class TitleBert:
                     wrong_ranking_label * tf.log(1 - sigmoid_song_predict + 1e-10)))
 
         with tf.name_scope('total_loss'):
-            self.loss = tf.reduce_mean(
-                tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(tag_loss, axis=-1))
-
-            self.loss_with_ranking_loss = tf.reduce_mean(
-                tf.reduce_mean(song_loss, axis=-1)) + self.tags_loss_weight * tf.reduce_mean(
-                tf.reduce_mean(tag_loss, axis=-1)) + 2 * tf.reduce_mean(
-                tf.reduce_mean(song_ranking_loss, axis=-1))
+            self.loss = tf.reduce_mean(song_loss) + self.tags_loss_weight * tf.reduce_mean(tag_loss)
+            self.loss_with_ranking_loss = self.loss + 2 * tf.reduce_mean(song_ranking_loss)
 
         with tf.name_scope('predictor'):
             self.reco_songs, self.reco_songs_score = self.top_k(
@@ -155,12 +145,12 @@ class TitleBert:
         with tf.name_scope('optimizer'):
             optimizer = tf.train.AdamOptimizer(self.lr, beta1=0.9, beta2=0.98, epsilon=1e-9)
             self.minimize = optimizer.minimize(self.loss)
-            # self.minimize_embedding_loss = optimizer.minimize(self.embedding_loss)
             self.minimize_masked_LM_loss = optimizer.minimize(self.masked_LM_loss)
             self.minimize_with_ranking_loss = optimizer.minimize(self.loss_with_ranking_loss)
 
         with tf.name_scope("saver"):
             self.saver = tf.train.Saver(max_to_keep=10000)
+
 
     def top_k(self, predict, top_k=100):
         reco = tf.math.top_k(  # [N, label]
@@ -233,7 +223,7 @@ class TitleBert:
                 Multihead_add_norm,
                 self.embedding_size,
                 output_mask=encoder_input_mask,  # set 0 bias added pad position
-                activation=tf.nn.relu,
+                activation=tf.nn.relu, # gelu보다 성능 잘나옴
                 name='encoder_dense' + str(i)
             )  # [N, self.encoder_input_length, self.embedding_size]
 
@@ -366,3 +356,18 @@ class TitleBert:
             dense += embedding
 
         return dense
+
+    # def gelu(self, x):  # https://github.com/google-research/bert/blob/master/modeling.py
+    #     """Gaussian Error Linear Unit.
+    #
+    #     This is a smoother version of the RELU.
+    #     Original paper: https://arxiv.org/abs/1606.08415
+    #     Args:
+    #         x: float Tensor to perform activation.
+    #
+    #     Returns:
+    #         `x` with the GELU activation applied.
+    #     """
+    #     cdf = 0.5 * (1.0 + tf.tanh(
+    #         (np.sqrt(2 / np.pi) * (x + 0.044715 * tf.pow(x, 3)))))
+    #     return x * cdf
