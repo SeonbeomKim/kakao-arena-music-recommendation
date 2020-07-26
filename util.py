@@ -28,7 +28,7 @@ def get_song_issue_dict(train_set, song_meta, label_info):
         plylst_updt_date = convert_updt_date(each["updt_date"])
         songs = list(filter(lambda song: song in all_songs_set, each['songs']))
         for song in songs:
-            if song_issue_dict[song] <= plylst_updt_date:
+            if song_issue_dict[song] != 0 and song_issue_dict[song] <= plylst_updt_date:
                 continue
 
             if song not in strange_song_issue_dict:
