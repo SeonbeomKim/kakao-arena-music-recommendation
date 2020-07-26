@@ -20,7 +20,8 @@
     *     python data_loader/dump_datasets.py
 
 4. 노래, 태그, 아티스트 기반의 추천 모델 학습
-    *     python trainer/songs_tags_artists_model_trainer.py --gpu={gpu number}
+    *     python trainer/songs_tags_artists_model_trainer.py \
+                --gpu={gpu number}
         ```
         args.add_argument('--bs', type=int, default=128)
         args.add_argument('--gpu', type=int, default=6)
@@ -30,7 +31,8 @@
         ```
 
 4. 플레이리스트 타이틀 기반의 추천 모델 학습
-    *     python trainer/plylst_title_model_trainer.py --gpu={gpu number}
+    *     python trainer/plylst_title_model_trainer.py \
+                --gpu={gpu number}
         ```
         args.add_argument('--bs', type=int, default=128)
         args.add_argument('--gpu', type=int, default=6)
@@ -38,8 +40,11 @@
         args.add_argument('--warmup_steps', type=float, default=4000)
         ```
 
-5. 두개의 추천 모델을 합쳐서 추천
-    *     python predictor/Ensemble.py --gpu={gpu number} --question_path={question_path}
+5. 두개의 추천 모델을 합쳐서 노래, 태그 추천
+    *     python predictor/Ensemble.py \
+                --gpu={gpu number} \
+                --question_path={question_path} \
+                --out_path={out_path}
         ```
         args.add_argument('--bs', type=int, default=128)
         args.add_argument('--gpu', type=int, default=6)
